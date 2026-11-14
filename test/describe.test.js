@@ -45,10 +45,11 @@ test('honest about 3 balls: no arc spacing and no error limit exist', () => {
 });
 
 test('honest about fountains: the gap between the hands is our assumption', () => {
-  for (const text of ['4', '6']) {
+  for (const text of ['4', '6', '8']) {
     const d = describe(text);
     assert.match(d.tag, /hand spacing assumed/);
     assert.match(d.notes.join(' '), /our assumption, not his/);
+    assert.match(d.notes.join(' '), /own side of the centre line/);
   }
 });
 
@@ -72,7 +73,7 @@ test('456 carries a collision warning that names the throws and the distance', (
   assert.equal(d.collision.bad, true);
   assert.match(d.collision.text, /would collide/);
   assert.match(d.collision.text, /the 5 and the 6/);
-  assert.match(d.collision.text, /4\.6 cm apart/);
+  assert.match(d.collision.text, /4\.5 cm apart/);
   assert.match(d.collision.text, /version 2/);
   assert.equal(d.vrStatusKind, 'warn');
   assert.match(d.vrStatus, /COLLISION/);
@@ -88,9 +89,11 @@ test('holds and empty hands are named, not given a flight', () => {
 });
 
 test('numbers with no published row are flagged in the tag and the notes', () => {
-  const ten = describe('a');
-  assert.match(ten.tag, /No published values/);
-  assert.match(ten.notes.join(' '), /interpolated/);
-  const mixed = describe('a8'); // highest throw 10 borrows the interpolated row
-  assert.match(mixed.notes.join(' '), /no published values/);
+  const fourteen = describe('e');
+  assert.match(fourteen.tag, /No published values: extrapolated/);
+  assert.match(fourteen.notes.join(' '), /no published values/);
+  const mixed = describe('e8'); // highest throw 14 borrows the extrapolated row
+  assert.match(mixed.notes.join(' '), /no published values for a 14-ball fountain/);
+  // Everything in the table is presented as published.
+  for (const text of ['5', '6', '7', '8', '9', 'a', 'b', 'c', 'd']) assert.doesNotMatch(describe(text).tag, /No published/);
 });

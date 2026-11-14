@@ -53,7 +53,7 @@ export function describePattern(pattern, collisions) {
       notes.push('With 3 balls there is less than one ball in the air per hand, so balls on the same arc never meet. Kalvan’s arc spacing and error limit do not exist here; P is his measured value.');
     }
     if (u.kind === 'fountain') {
-      notes.push('Kalvan’s math fixes each hand’s arc but leaves the gap between the hands free. Here the two inside throw points are one D1 apart: our assumption, not his.');
+      notes.push('Kalvan’s math fixes each hand’s arc but not the gap between the hands: he only says the hands stay on their own side of the centre line (width over ' + fmt.cm(2 * u.F) + ' here). The two inside throw points are drawn one D1 apart: our assumption, not his.');
     }
     return {
       title: name,
@@ -81,7 +81,7 @@ export function describePattern(pattern, collisions) {
     'The spatial optimum is only derived for uniform cascades and fountains. This pattern borrows the hand positions and tempo of Kalvan’s ' + refName + ', so its highest throw is exactly that throw.',
   ];
   if (ref.source !== 'KL18' && ref.source !== 'K96m') {
-    notes.push('Careful: for a ' + refName + ' there are ' + SOURCE_LABELS[ref.source].replace(/^.*\(|\)$/g, '') + ', so its tempo and spacing are ' + ref.source + '.');
+    notes.push('Careful: there are no published values for a ' + refName + ', so its tempo and spacing are ' + ref.source + '.');
   }
   let collision;
   let vrStatus = 'exact timing, standard layout';

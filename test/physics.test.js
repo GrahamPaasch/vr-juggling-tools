@@ -227,25 +227,49 @@ test('7-ball optimum reproduces the juggling_coach README numbers', () => {
 });
 
 test('the other rows of the "When Balls Collide" table come out within rounding', () => {
-  // balls: [W, T, H, F, D1, P, width, Emax deg] as printed (p. 78). 13's last two were not legible.
-  const table = {
+  // Cascades as printed (p. 78): balls: [W, T, H, F, D1, P, width, Emax deg].
+  const cascades = {
     5: [1.8, 0.49, 1.0, 0.52, 0.29, 0.32, 0.84, 3.3],
     7: [2.8, 0.42, 1.7, 0.65, 0.23, 0.27, 0.92, 1.4],
     9: [3.8, 0.35, 2.2, 0.73, 0.19, 0.23, 0.96, 0.84],
     11: [4.8, 0.3, 2.6, 0.8, 0.17, 0.22, 1.02, 0.6],
-    13: [5.8, 0.27, 3.0, 0.93, 0.16, 0.22, null, null],
+    13: [5.8, 0.27, 3.0, 0.93, 0.16, 0.22, 1.15, 0.48],
   };
-  for (const [balls, row] of Object.entries(table)) {
+  for (const [balls, row] of Object.entries(cascades)) {
     const u = uniformPattern(Number(balls));
     const [W, T, H, F, D1, P, width, emax] = row;
+    assert.equal(u.kind, 'cascade');
     near(u.W, W, 1e-9, balls + ' W');
     assert.equal(u.T, T);
     assert.equal(u.F, F);
     near(u.H, H, 0.06, balls + ' H');
     near(u.D1, D1, 0.005, balls + ' D1');
     near(u.P, P, 0.015, balls + ' P');
-    if (width !== null) near(u.width, width, 0.015, balls + ' width');
-    if (emax !== null) near(u.emaxDeg, emax, 0.15, balls + ' Emax');
+    near(u.width, width, 0.015, balls + ' width');
+    near(u.emaxDeg, emax, 0.15, balls + ' Emax');
+    assert.equal(u.source, 'KL18');
+  }
+
+  // Fountains as printed: balls: [W, T, H, F, D1, Emax deg]. The table gives no P for these,
+  // only that the pattern is wider than 2F. T is printed to two decimals, which is why H for
+  // 8, 10 and 12 lands up to 0.1 m under the printed H.
+  const fountains = {
+    6: [2.3, 0.46, 1.4, 0.37, 0.16, 1.0],
+    8: [3.3, 0.38, 2.0, 0.45, 0.14, 0.57],
+    10: [4.3, 0.32, 2.4, 0.52, 0.12, 0.35],
+    12: [5.3, 0.28, 2.8, 0.57, 0.11, 0.25],
+  };
+  for (const [balls, row] of Object.entries(fountains)) {
+    const u = uniformPattern(Number(balls));
+    const [W, T, H, F, D1, emax] = row;
+    assert.equal(u.kind, 'fountain');
+    near(u.W, W, 1e-9, balls + ' W');
+    assert.equal(u.T, T);
+    assert.equal(u.F, F);
+    near(u.H, H, 0.11, balls + ' H');
+    near(u.D1, D1, 0.005, balls + ' D1');
+    near(u.emaxDeg, emax, 0.06, balls + ' Emax');
+    assert.ok(u.width > 2 * F, balls + ': wider than 2F, the hands stay on their own side');
     assert.equal(u.source, 'KL18');
   }
 });
@@ -270,25 +294,28 @@ test('3 balls: less than one ball per arc, so no D1 and no Emax (the math does n
 });
 
 test('fountains: E = F = W * D1, each ball returns to the hand that threw it', () => {
-  for (const b of [4, 6, 8]) {
+  for (const b of [4, 6, 8, 10, 12]) {
     const u = uniformPattern(b);
     assert.equal(u.kind, 'fountain');
     near(u.F, u.W * u.D1, 1e-12);
     near(u.xC - u.xT, u.F, 1e-12, 'same-side flight distance');
     assert.deepEqual(u.assumptions, ['A3']);
-    const rec = throwAtBeat(buildPattern(String(b)), 0);
+    const rec = throwAtBeat(buildPattern(b.toString(36)), 0); // 10 is "a", 12 is "c"
     assert.equal(rec.toHand, rec.hand);
     assert.ok(rec.x0 > 0 && rec.x1 > rec.x0, 'right hand throws inside and catches outside');
   }
 });
 
 test('ball counts without a published row are flagged, never silently invented', () => {
-  assert.equal(uniformPattern(10).source, 'interpolated');
-  assert.equal(uniformPattern(12).source, 'interpolated');
-  assert.equal(uniformPattern(14).source, 'extrapolated');
-  assert.equal(uniformPattern(15).source, 'extrapolated');
-  for (const b of [3, 4, 5, 6, 7, 8, 9, 11, 13]) {
-    assert.ok(['KL18', 'K96m'].includes(uniformPattern(b).source));
+  for (const b of [5, 6, 7, 8, 9, 10, 11, 12, 13]) assert.equal(uniformPattern(b).source, 'KL18');
+  for (const b of [3, 4]) assert.equal(uniformPattern(b).source, 'K96m');
+  for (const b of [14, 15, 16, 20, 35]) {
+    const u = uniformPattern(b);
+    assert.equal(u.source, 'extrapolated');
+    // It borrows tempo and spacing from the last published row of the same kind.
+    assert.equal(u.borrowedFrom, b % 2 ? 13 : 12);
+    assert.equal(u.T, uniformPattern(u.borrowedFrom).T);
+    near(u.D1, uniformPattern(u.borrowedFrom).D1, 1e-12);
   }
   assert.throws(() => uniformPattern(2), RangeError);
 });
@@ -321,7 +348,7 @@ test('height for each throw value: H = g f^2 / 8 with real gravity', () => {
   near(launchSpeed(1), 9.81 / 2, 1e-12);
 
   // Uniform patterns at Kalvan's tempos.
-  const expected = { 3: [0.44, 0.2374], 4: [0.689, 0.5821], 5: [0.882, 0.9539], 6: [1.081, 1.4329], 7: [1.176, 1.6959] };
+  const expected = { 3: [0.44, 0.2374], 4: [0.689, 0.5821], 5: [0.882, 0.9539], 6: [1.058, 1.3726], 7: [1.176, 1.6959] };
   for (const [text, [flight, height]] of Object.entries(expected)) {
     const p = buildPattern(text);
     const v = Number(text);
@@ -490,8 +517,8 @@ test("collision: the detector finds exactly Kalvan's clearance in his optimal ca
     assert.equal(result.collides, false);
   }
   // Fountains: the tightest pair is two neighbours on one arc.
-  for (const b of [4, 6, 8]) {
-    const pattern = buildPattern(String(b));
+  for (const b of [4, 6, 8, 10, 12]) {
+    const pattern = buildPattern(b.toString(36));
     near(findCollisions(pattern).minDistance, pattern.spatial.D1, 1e-9, b + ' balls');
   }
   // 3 balls: only the crossing clearance D2 exists.

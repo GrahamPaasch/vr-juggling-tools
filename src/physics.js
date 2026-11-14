@@ -215,29 +215,31 @@ export function launchSpeed(flight) {
 /**
  * Published hand periods T and flight distances F, by number of balls.
  *
- *  KL18  "When Balls Collide" table of good patterns (p. 78): 5, 7, 9, 11, 13 ball cascades, 6 cm
- *        balls, W = b/2 - 0.7. The 7-ball row is the juggling_coach README row.
- *  K96m  "Optimal Juggling" index, average measurements from videotape: Kalvan's own 3, 4 and 6
- *        ball patterns and Anthony Gatto's 8 ball fountain. For 3 balls the measured dwell
+ *  KL18  "When Balls Collide", table of pattern parameters, "examples of good patterns" (p. 78):
+ *        cascades of 5, 7, 9, 11, 13 balls and fountains of 6, 8, 10, 12 balls, with 6 cm balls
+ *        and W = b/2 - 0.7 on every row. The 7-ball row is the juggling_coach README row.
+ *  K96m  "Optimal Juggling" index, average measurements from videotape of Kalvan's own 3 and
+ *        4 ball patterns, which the book's table does not cover. For 3 balls the measured dwell
  *        distance E = 0.20 m is used as the arc separation P (throw and catch at the same height).
  */
 export const PUBLISHED = {
   3: { T: 0.55, F: 0.33, P: 0.2, source: 'K96m' },
   4: { T: 0.53, F: 0.25, source: 'K96m' },
   5: { T: 0.49, F: 0.52, source: 'KL18' },
-  6: { T: 0.47, F: 0.38, source: 'K96m' },
+  6: { T: 0.46, F: 0.37, source: 'KL18' },
   7: { T: 0.42, F: 0.65, source: 'KL18' },
-  8: { T: 0.38, F: 0.44, source: 'K96m' },
+  8: { T: 0.38, F: 0.45, source: 'KL18' },
   9: { T: 0.35, F: 0.73, source: 'KL18' },
+  10: { T: 0.32, F: 0.52, source: 'KL18' },
   11: { T: 0.3, F: 0.8, source: 'KL18' },
+  12: { T: 0.28, F: 0.57, source: 'KL18' },
   13: { T: 0.27, F: 0.93, source: 'KL18' },
 };
 
 export const SOURCE_LABELS = {
   KL18: 'Kalvan & Lewbel 2018, table of good patterns',
   K96m: 'Kalvan 1996, measured from videotape',
-  interpolated: 'interpolated between published rows (no published values for this number)',
-  extrapolated: 'held at the nearest published row (no published values for this number)',
+  extrapolated: 'held at the highest published row of its kind (no published values for this number)',
 };
 
 /**
@@ -325,8 +327,10 @@ export function uniformPattern(balls, overrides) {
       P = row.P; // 3 balls: measured, the theory leaves it free
     }
   } else {
-    // Fountain: the hands juggle independently and [K96] leaves P free ("approximately the width
-    // of the shoulders"). Assumption A3: keep the two inside throw points one D1 apart.
+    // Fountain: the hands juggle independently, so P is not fixed by the collision math. [K96]:
+    // "approximately the width of the shoulders"; [KL18]: the hands do not reach across the
+    // centre line, so the pattern is wider than 2F. Assumption A3: keep the two inside throw
+    // points one D1 apart, P = F + D1 (width 2F + D1).
     P = F + D1;
     assumptions.push('A3');
   }
@@ -368,20 +372,18 @@ export function uniformPattern(balls, overrides) {
 }
 
 /**
- * The published row for b balls, or a clearly flagged stand-in when none was published:
- * 10 and 12 are interpolated between their neighbours and above 13 the 13-ball values are held.
+ * The published row for b balls. Beyond the table (14 balls and up) there is nothing published:
+ * the tempo and ball spacing of the highest published row of the same kind are held (13 for
+ * cascades, 12 for fountains) and the result is flagged as extrapolated.
  */
 function publishedRow(b, r) {
   if (PUBLISHED[b]) return Object.assign({}, PUBLISHED[b]);
-  const d1Of = (n) => PUBLISHED[n].F / ballsInFlightPerHand(n, r);
-  if (b > 13) {
-    return { T: PUBLISHED[13].T, D1: d1Of(13), source: 'extrapolated', borrowedFrom: 13 };
-  }
-  // b is 10 or 12: both neighbours are published cascades.
+  const from = b % 2 === 1 ? 13 : 12;
   return {
-    T: (PUBLISHED[b - 1].T + PUBLISHED[b + 1].T) / 2,
-    D1: (d1Of(b - 1) + d1Of(b + 1)) / 2,
-    source: 'interpolated',
+    T: PUBLISHED[from].T,
+    D1: PUBLISHED[from].F / ballsInFlightPerHand(from, r),
+    source: 'extrapolated',
+    borrowedFrom: from,
   };
 }
 

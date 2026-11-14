@@ -130,13 +130,13 @@ room for error (set by `F`) as the juggler's preference, and derives the rest. T
 
 | Balls | Pattern | T (s) | F (m) | Source |
 |---|---|---|---|---|
-| 3 | cascade | 0.55 | 0.33 (and P = 0.20) | [K96] measured, Kalvan |
-| 4 | fountain | 0.53 | 0.25 | [K96] measured, Kalvan |
-| 5 | cascade | 0.49 | 0.52 | [KL18] table of good patterns |
-| 6 | fountain | 0.47 | 0.38 | [K96] measured, Kalvan |
-| 7 | cascade | 0.42 | 0.65 | [KL18] table = juggling_coach README |
-| 8 | fountain | 0.38 | 0.44 | [K96] measured, Anthony Gatto |
-| 9, 11, 13 | cascade | 0.35, 0.30, 0.27 | 0.73, 0.80, 0.93 | [KL18] table of good patterns |
+| 3 | cascade | 0.55 | 0.33 (and P = 0.20) | [K96] measured, Kalvan's own pattern |
+| 4 | fountain | 0.53 | 0.25 | [K96] measured, Kalvan's own pattern |
+| 5, 7, 9, 11, 13 | cascade | 0.49, 0.42, 0.35, 0.30, 0.27 | 0.52, 0.65, 0.73, 0.80, 0.93 | [KL18] table of good patterns |
+| 6, 8, 10, 12 | fountain | 0.46, 0.38, 0.32, 0.28 | 0.37, 0.45, 0.52, 0.57 | [KL18] table of good patterns |
+
+The 7-ball row is the juggling_coach README row. 14 balls and up have no published values: the
+tempo and ball spacing of the last published row of the same kind are held, and the page says so.
 
 **Check against the published table.** From only `T`, `F`, `r = 0.7` and `D = 6 cm`, the formulas
 above give (published values in brackets):
@@ -147,13 +147,19 @@ above give (published values in brackets):
 | **7** | **2.8** | **1.70 [1.7]** | **0.232 [.23]** | **0.263 [.27]** | **0.913 [.92]** | **1.45 [1.4]** |
 | 9 | 3.8 | 2.17 [2.2] | 0.192 [.19] | 0.228 [.23] | 0.958 [.96] | 0.87 [.84] |
 | 11 | 4.8 | 2.54 [2.6] | 0.167 [.17] | 0.209 [.22] | 1.009 [1.02] | 0.60 [.60] |
-| 13 | 5.8 | 3.01 [3.0] | 0.160 [.16] | 0.215 [.22] | 1.145 | 0.48 |
+| 13 | 5.8 | 3.01 [3.0] | 0.160 [.16] | 0.215 [.22] | 1.145 [1.15] | 0.48 [.48] |
+| 6 | 2.3 | 1.37 [1.4] | 0.161 [.16] | A3 | 0.90 [over 2F] | 1.05 [1.0] |
+| 8 | 3.3 | 1.93 [2.0] | 0.136 [.14] | A3 | 1.04 [over 2F] | 0.57 [.57] |
+| 10 | 4.3 | 2.32 [2.4] | 0.121 [.12] | A3 | 1.16 [over 2F] | 0.38 [.35] |
+| 12 | 5.3 | 2.70 [2.8] | 0.108 [.11] | A3 | 1.25 [over 2F] | 0.25 [.25] |
 
 The 7-ball row is the one in the juggling_coach README (T = .42 s, W = 2.8, H = 1.7 m, F = .65 m,
 D1 = .23 m, P = .27 m, width .92 m, Emax 1.4°). Every value is reproduced to within about a
 centimetre and a tenth of a degree. The small differences are rounding in the printed table: for
-example its Emax is computed from its own rounded D1 and H, (0.23 - 0.06) / (4 x 1.7) = 1.43°.
-The unit tests pin these tolerances.
+example its Emax is computed from its own rounded D1 and H, (0.23 - 0.06) / (4 x 1.7) = 1.43°,
+and T is printed to two decimals, which is why H for 8, 10 and 12 balls lands up to 0.1 m under
+the printed H. For fountains the table prints no P, only that the pattern is wider than 2F; the
+width shown is assumption A3 below. The unit tests pin these tolerances.
 
 The collision detector (next section) independently finds a closest approach of exactly `D1` in
 every one of these cascades, which checks both the formula for `P` and the detector.
@@ -163,7 +169,7 @@ every one of these cascades, which checks both the formula for `P` and the detec
 Two balls in flight share the same acceleration, so their separation changes linearly with time.
 The closest approach of every pair of flights is therefore found exactly, with no time stepping.
 Centres closer than one ball diameter count as a collision. `456` on the standard layout is a real
-one: a 5 at its peak meets a rising 6, 4.6 cm between centres. That is the pattern the spec
+one: a 5 at its peak meets a rising 6, 4.5 cm between centres. That is the pattern the spec
 suggests fixing with an outside throw in version 2.
 
 Scope: balls in flight, in the ideal planar pattern. Balls being carried by a hand are not checked.
@@ -180,13 +186,13 @@ Assumptions, each labelled in the code with the same tag:
 |---|---|---|
 | A1 | A `1` flies for `(1 - r) B` and is held `r B`; it is handed from one hand's inside (throw) point to the other's. | A full dwell `2rB` is longer than the one beat a 1 has. The same ratio is applied to that one beat, so no new constant is needed. With r = 0.7 this is 0.3 of a beat. Jugglers bring the hands together for a 1. |
 | A2 | A `2` is a hold and a `0` is an empty hand. | Standard siteswap convention. |
-| A3 | Fountain: the two inside throw points are one `D1` apart, `P = F + D1`. | [K96] derives `E = F = W D1` but leaves the gap between the hands free ("approximately the width of the shoulders"). This keeps the same clearance there as on the arc. It gives 0.44 m for 4 balls and 0.55 m for 6. |
+| A3 | Fountain: the two inside throw points are one `D1` apart, `P = F + D1`, so the pattern is `2F + D1` wide. | The hands juggle independently, so the collision math does not fix the gap between them. [K96]: "approximately the width of the shoulders". [KL18]: shoulder width is comfortable, and jugglers do not reach across the centre line, so the pattern is wider than `2F`. This choice keeps the same clearance between the hands as on the arc. It gives P = 0.44 m for 4 balls and 0.53 m for 6. |
 | A4 | A mixed siteswap uses the tempo and the throw and catch points of the uniform pattern of its highest throw, so that throw is exactly the cascade or fountain throw. | The spatial optimum is not derived for mixed patterns. [K96] notes that the high throw of a b-ball shower is "about the same as in a cascade with (2b - 1) balls". |
 | A5 | Ghost hand path between catch and release: a cubic Hermite curve in time, with the hand still at the instant of the catch. A hold waits at the catch point and scoops one normal dwell before the release. | [K96]: "the exact path is unspecified". Only the catch and throw points are part of the optimum. The scoop depth that results (12 cm for 3 balls, 25 cm for 7) is a drawing choice. |
 | A6 | Balls are thrown and caught at the same height. | The simplification used by [KL18] and by the `H` in juggling_coach. [K96] derives a small tilt (catch slightly above throw); it is not used. |
 | A7 | Dwell ratio `r = 0.7` for every pattern. | It is what the [KL18] table uses (W = b/2 - 0.7). [K96] reports "near 2/3" and measures 0.63 to 0.71. |
-| A8 | 3 balls: `P` = the measured dwell distance 0.20 m. 10 and 12 balls are interpolated between their neighbours; above 13 the 13-ball values are held. | With 3 balls `W < 1`, so `D1` and `Emax` do not exist and the theory leaves `P` free. No values are published for 10, 12 or beyond 13; the page flags these patterns. |
-| A9 | Ball diameter 6 cm for everything. | The juggling_coach row. Kalvan's own measured patterns (3, 4, 6 balls) used 7.5 cm balls, so the `Emax` shown for those rows mixes his spacing with a 6 cm ball. |
+| A8 | 3 balls: `P` = the measured dwell distance 0.20 m. 14 balls and up: the tempo and spacing of the last published row of the same kind are held. | With 3 balls `W < 1`, so `D1` and `Emax` do not exist and the theory leaves `P` free. Nothing is published beyond 13 balls; the page flags those patterns. |
+| A9 | Ball diameter 6 cm for everything. | The [KL18] table and the juggling_coach row. Kalvan's own measured patterns (the 3 and 4 ball rows) used 7.5 cm balls, so the `Emax` shown for 4 balls mixes his spacing with a 6 cm ball. |
 
 Not physics at all, just defaults: hand height 1.05 m, eye height 1.65 m and 0.35 m from the
 body until you calibrate (in VR the first guess is 0.6 m below your head); the peak-tone pitch
@@ -195,8 +201,10 @@ body until you calibrate (in VR the first guess is 0.6 m below your head); the p
 A note on the source: the book [KL18] itself was not on hand when this was built. Its table rows
 were read from Google Books search snippets (p. 78) and cross-checked against the 7-ball row in
 the juggling_coach README, which matches. The formulas were taken from the full text of [K96];
-the snippets of [KL18] (pp. 56 to 59, 148 to 149) show the same formulas with `T` and `W` in
-place of tau and omega. Anyone with the book should check the table rows for 5, 9, 11 and 13.
+the snippets of [KL18] (pp. 56 to 60, 69 to 71, 148 to 149) show the same formulas with `T` and
+`W` in place of tau and omega. Anyone with the book should check the table rows other than 7.
+One printed value looks inconsistent in the snippet: the 6-ball row reads F = 0.37 with a width
+"over 0.77", where 2F is 0.74; F = 0.37 is used because it agrees with the printed D1 and Emax.
 
 ## Version 1 and version 2
 
