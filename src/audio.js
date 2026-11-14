@@ -41,6 +41,45 @@ export function effectiveVolume(settings, type) {
   return s.on ? s.volume : 0;
 }
 
+/**
+ * Follows a value that is constant apart from slow drift, through noisy samples: quickly for the
+ * first second and a half, then with a 1.5 s time constant. A sample further than `jump` from the
+ * estimate is ignored unless it persists for three frames, when it is adopted at once (the device
+ * really changed, or audio was suspended).
+ */
+export class SlowFollower {
+  constructor() {
+    this.value = null;
+    this.since = 0;
+    this.stamp = 0;
+    this.misses = 0;
+  }
+
+  follow(sample, nowMs, jump) {
+    if (this.value === null) {
+      this.value = sample;
+      this.since = nowMs;
+      this.stamp = nowMs;
+      return this.value;
+    }
+    if (nowMs === this.stamp) return this.value; // one update per frame
+    const dt = Math.min(Math.max((nowMs - this.stamp) / 1000, 0), 0.25);
+    this.stamp = nowMs;
+    if (Math.abs(sample - this.value) > jump) {
+      if (++this.misses >= 3) {
+        this.value = sample;
+        this.since = nowMs;
+        this.misses = 0;
+      }
+      return this.value;
+    }
+    this.misses = 0;
+    const tau = nowMs - this.since < 1500 ? 0.08 : 1.5;
+    this.value += (sample - this.value) * (1 - Math.exp(-dt / tau));
+    return this.value;
+  }
+}
+
 export class SoundBoard {
   constructor() {
     this.ctx = null;
@@ -50,8 +89,10 @@ export class SoundBoard {
     this.pending = [];
     this.played = { catch: 0, release: 0, peak: 0 }; // counters, handy for tests
     this.lastPeakHz = 0;
-    this.clockOffset = null;
-    this.clockStamp = 0;
+    this.renderClock = new SlowFollower();
+    this.speakerClock = new SlowFollower();
+    this.latency = null; // seconds, as last estimated by timeFor()
+    this.clock = ''; // which latency source timeFor() last used, for diagnostics
   }
 
   /** Browsers only start audio after a tap or key press: call this from one. */
@@ -85,25 +126,44 @@ export class SoundBoard {
   }
 
   /**
-   * The audio-clock time at which a sound must be scheduled to be heard at page time `perfMs`
-   * (a performance.now() value). Call once per frame with `nowMs` to keep the mapping fresh.
+   * The audio-clock time at which to schedule a sound so that it is heard at page time `perfMs`
+   * (a performance.now() value). `nowMs` is the page time of the current frame.
    *
-   * ctx.currentTime only advances in blocks, so reading it directly would add a few
-   * milliseconds of jitter to every event. Instead the offset between the two clocks is tracked
-   * as a slowly leaking maximum, which is steady. Sounds are also moved earlier by the reported
-   * output latency, as far as `maxAdvance` (seconds) allows.
+   * Evenness comes first. ctx.currentTime only advances in blocks (3 to 20 ms depending on the
+   * device), so "currentTime + delay" would put that much jitter on every catch. Instead the
+   * offset between the page clock and the audio clock is followed slowly: the two clocks tick at
+   * almost the same rate, so the offset is all but constant and a slow follower is steady.
+   *
+   * Then sync. Sound leaves the speaker later than it is rendered. That latency is measured from
+   * getOutputTimestamp() where the browser provides a believable one (it pairs an audio-clock
+   * time with the page time at which that sample reaches the speaker), and otherwise taken from
+   * outputLatency + baseLatency. Sounds are scheduled earlier by that much, up to `maxAdvance`
+   * seconds: a sound cannot be scheduled in the past, so latency beyond the caller's look-ahead
+   * is heard as a constant delay, never as unevenness.
    */
   timeFor(perfMs, nowMs, maxAdvance) {
-    const sample = this.ctx.currentTime - nowMs / 1000;
-    if (this.clockOffset === null || sample > this.clockOffset || this.clockOffset - sample > 0.25) {
-      this.clockOffset = sample;
-    } else if (nowMs !== this.clockStamp) {
-      this.clockOffset -= 2e-5; // leak: lets the estimate follow clock drift
+    const ctx = this.ctx;
+    const room = Math.max(maxAdvance || 0, 0);
+    const now = nowMs / 1000;
+
+    // Offset to the render clock (currentTime), smoothed.
+    const render = this.renderClock.follow(ctx.currentTime - now, nowMs, 0.1);
+
+    // Offset to the speaker clock, when the browser's output timestamp is usable.
+    let latency = Math.max((ctx.outputLatency || 0) + (ctx.baseLatency || 0), 0);
+    this.clock = 'currentTime';
+    const stamp = ctx.getOutputTimestamp ? ctx.getOutputTimestamp() : null;
+    if (stamp && stamp.performanceTime > 0 && nowMs - stamp.performanceTime < 250) {
+      const pair = stamp.contextTime - stamp.performanceTime / 1000;
+      const implied = render - pair; // the latency this stamp implies
+      // Just after start-up browsers return stale or zero stamps: ignore anything implausible.
+      if (implied > -0.02 && implied < 0.5) {
+        latency = Math.max(render - this.speakerClock.follow(pair, nowMs, 0.03), 0);
+        this.clock = 'output timestamp';
+      }
     }
-    this.clockStamp = nowMs;
-    const latency = (this.ctx.outputLatency || 0) + (this.ctx.baseLatency || 0);
-    const advance = Math.min(Math.max(latency, 0), Math.max(maxAdvance || 0, 0));
-    return perfMs / 1000 + this.clockOffset - advance;
+    this.latency = latency;
+    return perfMs / 1000 + render - Math.min(latency, room);
   }
 
   makeNoise() {

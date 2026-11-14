@@ -19,7 +19,8 @@ import { XRControl } from './xr.js';
 import { FlatUI } from './ui.js';
 
 const STORAGE_KEY = 'vr-juggling-visualizer.v1';
-const AUDIO_LOOKAHEAD = 0.12; // seconds of real time scheduled ahead on the audio clock
+const AUDIO_LOOKAHEAD = 0.2; // seconds of real time scheduled ahead on the audio clock
+const AUDIO_MARGIN = 0.05; // of which this much is never spent on compensating output latency
 
 /**
  * Where the pattern sits before anyone calibrates. Placeholders for a standing adult, not physics:
@@ -305,6 +306,9 @@ function setSound(type, patch) {
     for (const t of SOUND_TYPES) audio.settings[t].solo = false; // one solo at a time
     s.solo = next;
   }
+  // Re-schedule what is already queued, so the change is heard at once.
+  audio.cancelPending();
+  state.audioHorizon = state.simTime;
   ui.setSound(audio.settings, audio.running);
   save();
 }
@@ -523,7 +527,7 @@ function scheduleSounds(now) {
   const limit = Math.min(events.length, 48);
   for (let i = 0; i < limit; i++) {
     const e = events[i];
-    const when = audio.timeFor(now + ((e.time - state.simTime) / state.speed) * 1000, now, AUDIO_LOOKAHEAD - 0.05);
+    const when = audio.timeFor(now + ((e.time - state.simTime) / state.speed) * 1000, now, AUDIO_LOOKAHEAD - AUDIO_MARGIN);
     tmpWorld.set(e.x, e.y, 0);
     stage.anchor.localToWorld(tmpWorld);
     const side = tmpWorld.sub(tmpCam).dot(tmpRight);

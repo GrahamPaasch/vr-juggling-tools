@@ -324,7 +324,122 @@ async function flatScreen(browser, base) {
     await page.click('.sound[data-sound="catch"] .mute');
   });
 
+  await check('the catch rhythm is even on the audio clock, and each hand sounds from its own side', async () => {
+    await page.click('#presets [data-pattern="3"]');
+    const log = await app(
+      page,
+      () =>
+        new Promise((resolve) => {
+          const v = window.__vrj;
+          const calls = [];
+          const original = v.audio.play;
+          v.audio.play = function (type, when, pan, height) {
+            calls.push({ type, when, pan, lead: when - v.audio.ctx.currentTime });
+            return original.call(this, type, when, pan, height);
+          };
+          setTimeout(() => {
+            v.audio.play = original;
+            resolve({ calls, beat: v.state.pattern.beat, xC: v.state.pattern.layout.xC, clock: v.audio.clock, latency: v.audio.latency });
+          }, 6500);
+        })
+    );
+    // Skip the first two seconds: the audio clock is still being learned just after sound starts.
+    const catches = log.calls.filter((c) => c.type === 'catch' && c.when > log.calls[0].when + 2);
+    assert.ok(catches.length >= 12, 'catches heard: ' + catches.length);
+    const gaps = catches.slice(1).map((c, i) => c.when - catches[i].when);
+    const worst = Math.max(...gaps.map((g) => Math.abs(g - log.beat)));
+    const spread = Math.max(...gaps) - Math.min(...gaps);
+    console.log(
+      '          audio clock: ' + log.clock + ', latency ' + (log.latency === null ? 'n/a' : (log.latency * 1000).toFixed(1) + ' ms') +
+        ', gap error up to ' + (worst * 1000).toFixed(2) + ' ms, gap-to-gap spread ' + (spread * 1000).toFixed(2) + ' ms'
+    );
+    // Headless Chromium's stand-in audio device runs about 0.4% off the page clock, which alone
+    // is ~1.2 ms per beat here. Both limits are well under what an ear can pick out (a few ms).
+    assert.ok(worst < 0.0025, 'one catch per beat (' + log.beat + ' s), worst gap error ' + (worst * 1000).toFixed(2) + ' ms');
+    assert.ok(spread < 0.002, 'the gaps are even: spread ' + (spread * 1000).toFixed(2) + ' ms');
+    // Right after a pattern change the first sounds cannot be scheduled early; after that all are.
+    const steady = log.calls.filter((c) => c.when > log.calls[0].when + 0.5);
+    assert.ok(steady.length > 15 && steady.every((c) => c.lead > 0 && c.lead < 0.3), 'every sound is scheduled ahead of time, none is late');
+    // Right hand catches come from the right, left from the left, alternating.
+    const expected = (log.xC / 0.5) * 0.8;
+    for (let i = 1; i < catches.length; i++) near(catches[i].pan, -catches[i - 1].pan, 1e-6, 'catches alternate sides');
+    near(Math.abs(catches[0].pan), expected, 1e-6, 'pan follows where the hand is');
+  });
+
+  await check('the synthesised sounds are real: short, not clipped, release quieter, pitch as designed', async () => {
+    const r = await app(page, async () => {
+      const base = document.querySelector('script[type=module]').src.replace(/src\/main\.js.*$/, '');
+      const { SoundBoard, peakFrequency } = await import(base + 'src/audio.js');
+      const rate = 44100;
+      async function render(type, height, pan, tweak) {
+        const off = new OfflineAudioContext(2, rate * 0.6, rate);
+        const board = new SoundBoard();
+        board.ctx = off;
+        board.master = off.createGain();
+        board.master.connect(off.destination);
+        board.noise = board.makeNoise();
+        Object.defineProperty(board, 'running', { get: () => true });
+        if (tweak) tweak(board.settings);
+        board.play(type, 0.05, pan, height);
+        const buf = await off.startRendering();
+        const L = buf.getChannelData(0);
+        const R = buf.getChannelData(1);
+        let peak = 0;
+        let sum = 0;
+        let sumL = 0;
+        let sumR = 0;
+        for (let i = 0; i < L.length; i++) {
+          const m = (L[i] + R[i]) / 2;
+          peak = Math.max(peak, Math.abs(L[i]), Math.abs(R[i]));
+          sum += m * m;
+          sumL += L[i] * L[i];
+          sumR += R[i] * R[i];
+        }
+        let first = -1;
+        let last = -1;
+        for (let i = 0; i < L.length; i++) {
+          if (Math.abs(L[i]) + Math.abs(R[i]) > peak * 0.1) {
+            if (first < 0) first = i;
+            last = i;
+          }
+        }
+        // Pitch from zero crossings over 80 ms after the attack.
+        const a0 = first + Math.floor(rate * 0.01);
+        const a1 = Math.min(L.length - 1, a0 + Math.floor(rate * 0.08));
+        let crossings = 0;
+        for (let i = a0 + 1; i <= a1; i++) if (L[i - 1] < 0 !== L[i] < 0) crossings++;
+        return { peak, energy: sum, left: sumL, right: sumR, start: first / rate, length: (last - first) / rate, hz: crossings / 2 / ((a1 - a0) / rate) };
+      }
+      return {
+        catch: await render('catch', 0, 0),
+        release: await render('release', 0, 0),
+        low: await render('peak', 0.19, 0),
+        high: await render('peak', 0.95, 0),
+        lowHz: peakFrequency(0.19),
+        highHz: peakFrequency(0.95),
+        left: await render('catch', 0, -0.8),
+        muted: await render('catch', 0, 0, (s) => { s.catch.on = false; }),
+        soloed: await render('catch', 0, 0, (s) => { s.release.solo = true; }),
+        zero: await render('peak', 1, 0, (s) => { s.peak.volume = 0; }),
+      };
+    });
+    for (const name of ['catch', 'release', 'low', 'high']) {
+      assert.ok(r[name].peak > 0.02 && r[name].peak < 1, name + ' peak level ' + r[name].peak.toFixed(3));
+      near(r[name].start, 0.05, 0.004, name + ' starts when scheduled');
+    }
+    assert.ok(r.catch.length < 0.25, 'catch is a short thud: ' + r.catch.length.toFixed(3) + ' s');
+    assert.ok(r.release.length < 0.12, 'release is shorter still: ' + r.release.length.toFixed(3) + ' s');
+    assert.ok(r.low.length < 0.35, 'peak tone is a short ping: ' + r.low.length.toFixed(3) + ' s');
+    assert.ok(r.release.energy < r.catch.energy * 0.5, 'release carries less energy than catch at the default volumes');
+    near(r.low.hz, r.lowHz, r.lowHz * 0.06, 'measured pitch of a 0.19 m throw');
+    near(r.high.hz, r.highHz, r.highHz * 0.06, 'measured pitch of a 0.95 m throw');
+    assert.ok(r.high.hz > r.low.hz * 1.3, 'the higher throw sounds clearly higher');
+    assert.ok(r.left.left > r.left.right * 3, 'a left-hand catch is louder in the left ear');
+    assert.ok(r.muted.peak < 1e-6 && r.soloed.peak < 1e-6 && r.zero.peak < 1e-6, 'mute, another sound soloed, and zero volume are silent');
+  });
+
   await check('peak pitch follows throw height: in 531 the 5 is highest, the 1 lowest', async () => {
+    await page.click('#presets [data-pattern="531"]');
     const hz = await app(page, async () => {
       const { peakFrequency } = await import(new URL('src/audio.js', document.querySelector('script[type=module]').src.replace(/src\/main\.js.*$/, '')).href);
       const h = window.__vrj.state.pattern.heightByValue;
