@@ -83,7 +83,11 @@ export class FlatUI {
 
     // Any tap, click or key switches sound on (browsers only start audio from a gesture, and
     // they differ on which event counts).
-    const gesture = () => h.onGesture();
+    const gesture = (e) => {
+      // A finger going down is not yet a gesture to the browser; its lifting is.
+      if (e.type === 'pointerdown' && e.pointerType !== 'mouse') return;
+      h.onGesture();
+    };
     for (const type of ['pointerdown', 'pointerup', 'touchend', 'click', 'keydown']) {
       window.addEventListener(type, gesture, { capture: true, passive: true });
     }
