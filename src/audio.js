@@ -179,7 +179,7 @@ export class SoundBoard {
    * `height` is the peak height in metres (peak tone only).
    */
   play(type, when, pan, height) {
-    if (!this.running) return;
+    if (!this.running || !Number.isFinite(when)) return;
     const volume = effectiveVolume(this.settings, type);
     if (volume <= 0) return;
     const ctx = this.ctx;

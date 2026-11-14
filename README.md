@@ -238,7 +238,7 @@ materials, a few dozen draw calls, plain ES modules with no build step.
 
 ## Tests
 
-`npm test` runs 60 unit tests with `node --test`:
+`npm test` runs 63 unit tests with `node --test`:
 
 - siteswap validation, including clear refusals of synchronous and multiplex input;
 - Shannon's theorem, measured from the generated throws, for 3 to 13 balls;
@@ -249,7 +249,8 @@ materials, a few dozen draw calls, plain ES modules with no build step.
 - ghost hands: at the catch and release points on time, moving with the ball at release,
   scooping the right way round, alternating; no ball ever teleports;
 - the wording (honesty notes, collision warning) and the sound rules (solo, pitch, and the
-  clock that keeps the rhythm even).
+  clock that keeps the rhythm even);
+- 500 random valid siteswaps and 2000 random strings: nothing breaks, nothing is silently wrong.
 
 `npm run smoke` drives the real page in headless Chromium: 40 checks on a laptop-sized screen, a
 phone-sized screen, the live site's `/juggling/vr` path, and inside an emulated Oculus Quest 1

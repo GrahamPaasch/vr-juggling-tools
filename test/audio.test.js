@@ -192,3 +192,10 @@ test('nothing plays and nothing throws before the browser has unlocked audio', (
   board.cancelPending();
   assert.deepEqual(board.played, { catch: 0, release: 0, peak: 0 });
 });
+
+test('a nonsense time is dropped instead of reaching the audio engine', () => {
+  const board = new SoundBoard();
+  board.ctx = { state: 'running', currentTime: 1 }; // any call into it would throw
+  for (const when of [NaN, Infinity, -Infinity]) board.play('catch', when, 0, 0);
+  assert.deepEqual(board.played, { catch: 0, release: 0, peak: 0 });
+});

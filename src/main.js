@@ -60,6 +60,7 @@ let xr;
 let ui;
 
 let audioWasRunning = false;
+let soundFailed = false;
 
 const tmpWorld = new THREE.Vector3();
 const tmpCam = new THREE.Vector3();
@@ -225,7 +226,13 @@ function frame(dt, now, lead) {
     view.apply();
   }
   stage.update(state.simTime + lead * state.speed);
-  scheduleSounds(now);
+  try {
+    scheduleSounds(now);
+  } catch (err) {
+    // Sound must never take the picture down with it.
+    if (!soundFailed) console.warn('Sound scheduling failed; carrying on without it.', err);
+    soundFailed = true;
+  }
   stage.render();
   if (audio.running !== audioWasRunning) {
     audioWasRunning = audio.running;
@@ -519,7 +526,7 @@ function panelAction(id) {
  * the page time (performance.now) that state.simTime corresponds to.
  */
 function scheduleSounds(now) {
-  if (!audio.running || !state.pattern) {
+  if (!audio.running || !state.pattern || !(state.speed > 0)) {
     state.audioHorizon = state.simTime;
     return;
   }
