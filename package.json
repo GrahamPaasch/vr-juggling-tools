@@ -10,6 +10,7 @@
     "smoke": "node tools/smoke.mjs"
   },
   "devDependencies": {
+    "iwer": "2.8.0",
     "playwright-core": "1.56.0"
   },
   "engines": {
