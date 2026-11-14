@@ -24,8 +24,9 @@ export const BALL_DIAMETER = 0.06;
 
 /**
  * Dwell ratio r = d / (d + e): the fraction of the hand period a hand is holding a ball.
- * Every row of the [KL18] table has W = b/2 - 0.7, i.e. r = 0.7 (7 balls: W = 2.8).
- * [K96] reports preferred values "near 2/3"; 0.7 is the value behind the numbers this app must show.
+ * Every row of the [KL18] table has W = b/2 - 0.7, i.e. r = 0.7 (7 balls: W = 2.8), so 0.7 is the
+ * value behind the numbers this app must show. Measured values vary: "near 2/3" in [K96],
+ * 0.67 to 0.82 (average 0.75) in [KL18] p. 68.
  */
 export const DWELL_RATIO = 0.7;
 
