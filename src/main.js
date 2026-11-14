@@ -50,6 +50,7 @@ const state = {
   vrMessageUntil: 0,
   vr: { checking: true, supported: false, presenting: false, reason: '', error: '', calibrating: false },
   audioHorizon: 0,
+  displayLead: 0, // seconds from now until the current frame is shown (VR only), for diagnostics
 };
 
 let stage;
@@ -192,19 +193,27 @@ function start() {
   layout();
 
   let last = performance.now();
-  stage.renderer.setAnimationLoop(() => {
+  stage.renderer.setAnimationLoop((time, xrFrame) => {
     const now = performance.now();
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
     state.simTime += dt * state.speed;
-    frame(dt, now);
+    // A headset shows this frame a little later, at a time it tells us. Draw the balls where
+    // they will be then, so they line up with the tracked hands and with the sound.
+    let lead = 0;
+    if (xrFrame && typeof xrFrame.predictedDisplayTime === 'number') {
+      const ahead = (xrFrame.predictedDisplayTime - now) / 1000;
+      if (ahead > 0 && ahead < 0.1) lead = ahead;
+    }
+    state.displayLead = lead;
+    frame(dt, now, lead);
   });
 
   // For the smoke test and for poking at the app from a console.
   window.__vrj = { state, stage, view, audio, xr, ui, setPattern, setSpeed, setView, calibrate, panelAction, THREE };
 }
 
-function frame(dt, now) {
+function frame(dt, now, lead) {
   if (xr.presenting) {
     xr.update(dt);
     // Show the faint head at the juggler's spot once the person has stepped away from it.
@@ -215,7 +224,7 @@ function frame(dt, now) {
   } else {
     view.apply();
   }
-  stage.update(state.simTime);
+  stage.update(state.simTime + lead * state.speed);
   scheduleSounds(now);
   stage.render();
   if (audio.running !== audioWasRunning) {

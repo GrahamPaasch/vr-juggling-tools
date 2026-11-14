@@ -37,7 +37,8 @@ The spec this was built from is `specs/35-vr-juggling-visualizer.md` in the voic
   landing point until it feels like your real palm.
 - **Sound.** Catch (a ball landing in a palm), release (the ball leaving the hand, a little
   quieter by default) and a peak tone at the exact top of each arc whose pitch follows the height.
-  Each has its own volume, mute and solo.
+  Each has its own volume, mute and solo. Sounds are placed on the audio clock ahead of time, so
+  the rhythm is as even as the math and not as uneven as the frame rate.
 
 ### Run it
 
@@ -53,7 +54,11 @@ deployed, connect it by USB and run `adb reverse tcp:8080 tcp:8080`, then open
 
 Useful addresses: `?s=531` opens a pattern, `?view=orbit` starts stepped out.
 
-In VR: **A or X** shows or hides the control board; point at a button and pull the trigger.
+In VR the control board starts on your left, out of the way of the pattern. **A or X** brings it
+in front of you, and hides it if you are already looking at it. Point at a button and pull the
+trigger. Hide the board while you practise, so a stray trigger pull cannot press anything. The
+left stick moves you (push it well over: a resting thumb does nothing), the right stick turns you
+in 30 degree steps, and "my spot" on the board puts you back in the juggler's place.
 
 ## The math
 
@@ -233,7 +238,7 @@ materials, a few dozen draw calls, plain ES modules with no build step.
 
 ## Tests
 
-`npm test` runs 57 unit tests with `node --test`:
+`npm test` runs 60 unit tests with `node --test`:
 
 - siteswap validation, including clear refusals of synchronous and multiplex input;
 - Shannon's theorem, measured from the generated throws, for 3 to 13 balls;
@@ -243,13 +248,16 @@ materials, a few dozen draw calls, plain ES modules with no build step.
   grazing conditions exactly and agrees with brute-force time stepping;
 - ghost hands: at the catch and release points on time, moving with the ball at release,
   scooping the right way round, alternating; no ball ever teleports;
-- the wording (honesty notes, collision warning) and the sound rules (solo, pitch, timing).
+- the wording (honesty notes, collision warning) and the sound rules (solo, pitch, and the
+  clock that keeps the rhythm even).
 
-`npm run smoke` drives the real page in headless Chromium: 38 checks on a laptop-sized screen, a
+`npm run smoke` drives the real page in headless Chromium: 40 checks on a laptop-sized screen, a
 phone-sized screen, the live site's `/juggling/vr` path, and inside an emulated Oculus Quest 1
 using Meta's [Immersive Web Emulation Runtime](https://github.com/meta-quest/immersive-web-emulation-runtime)
 (trigger calibration, pointing at the board, keypad entry, slow-motion label, palm nudge,
-stick movement, hand tracking). The emulator is a test-only dev dependency; the page never loads it.
+stick movement, hand tracking). It also renders each sound offline and measures it (length,
+level, pitch, which ear), and measures the gap between scheduled catches (under 1 ms off).
+The emulator is a test-only dev dependency; the page never loads it.
 
 ## Deploying
 

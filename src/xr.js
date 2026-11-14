@@ -18,7 +18,7 @@ import { RIGHT, LEFT } from './physics.js';
 import { VRPanel } from './vrpanel.js';
 import { formatSpeed } from './describe.js';
 
-const STICK_DEADZONE = 0.25;
+const STICK_DEADZONE = 0.5; // high on purpose: a thumb resting on the stick must not move you
 const MOVE_SPEED = 1.4; // m/s, a slow walk
 const SNAP_ANGLE = Math.PI / 6;
 const BUTTON_AX = 4; // xr-standard gamepad: A on the right controller, X on the left
@@ -46,6 +46,8 @@ export class XRControl {
     this.palmBall = false;
     this.frames = 0;
     this.placed = false;
+    this.jointGeometry = null;
+    this.jointMaterial = null;
 
     this.panel = new VRPanel();
     stage.scene.add(this.panel.group);
@@ -258,7 +260,8 @@ export class XRControl {
     try {
       const gp = c.source && c.source.gamepad;
       const act = gp && gp.hapticActuators && gp.hapticActuators[0];
-      if (act && act.pulse) act.pulse(strength, ms);
+      const done = act && act.pulse ? act.pulse(strength, ms) : null;
+      if (done && done.catch) done.catch(() => {});
     } catch (err) {
       // haptics are a nicety
     }
@@ -439,12 +442,12 @@ export class XRControl {
       for (const name in c.hand.joints) {
         const joint = c.hand.joints[name];
         if (!joint.userData.dot) {
-          const dot = new THREE.Mesh(
-            new THREE.SphereGeometry(0.007, 8, 6),
-            new THREE.MeshBasicMaterial({ color: OWN_HAND_COLOR })
-          );
-          joint.userData.dot = dot;
-          joint.add(dot);
+          if (!this.jointGeometry) {
+            this.jointGeometry = new THREE.SphereGeometry(0.007, 8, 6);
+            this.jointMaterial = new THREE.MeshBasicMaterial({ color: OWN_HAND_COLOR });
+          }
+          joint.userData.dot = new THREE.Mesh(this.jointGeometry, this.jointMaterial);
+          joint.add(joint.userData.dot);
         }
         joint.userData.dot.visible = this.showMyHands;
       }

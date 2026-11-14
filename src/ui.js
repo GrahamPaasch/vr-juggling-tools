@@ -190,6 +190,7 @@ export class FlatUI {
       row.querySelector('.solo').setAttribute('aria-pressed', String(s.solo));
     }
     $('soundHint').hidden = running;
+    $('soundChip').hidden = running;
   }
 
   setCalibration(anchor, nudge, handTracking) {
