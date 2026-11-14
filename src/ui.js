@@ -81,8 +81,10 @@ export class FlatUI {
     $('panelClose').addEventListener('click', () => setPanel(false));
     $('panelOpen').addEventListener('click', () => setPanel(true));
 
-    // Any tap, click or key switches sound on (browsers only start audio from a gesture, and
-    // they differ on which event counts).
+    // Any tap, click or key press switches sound on. Browsers only start audio from a real
+    // gesture and differ on which event counts, so every candidate is offered; the sound board
+    // itself declines until the browser has seen one (Escape, a modifier key or the end of a
+    // scroll are not gestures to it).
     const gesture = (e) => {
       // A finger going down is not yet a gesture to the browser; its lifting is.
       if (e.type === 'pointerdown' && e.pointerType !== 'mouse') return;
@@ -123,7 +125,7 @@ export class FlatUI {
 
     const body = $('infoBody');
     body.textContent = '';
-    const table = el('table');
+    const table = el('table', d.tableClass ? { class: d.tableClass } : null);
     if (d.header) {
       table.appendChild(el('tr', null, d.header.map((t) => el('th', { text: t }))));
     }
@@ -219,10 +221,14 @@ export class FlatUI {
       b.disabled = false;
       b.textContent = 'Exit VR';
       note.textContent = 'In VR: the control board is on your left; A or X brings it in front. Point and pull the trigger.';
+    } else if (state.starting) {
+      b.disabled = true; // one request at a time
+      b.textContent = 'Starting VR';
+      note.textContent = 'Asking the headset to start. It may show a question of its own first.';
     } else if (state.supported) {
       b.disabled = false;
       b.textContent = 'Enter VR';
-      note.textContent = state.error || 'You start in the juggler’s spot. Walk around the pattern, or use the left stick.';
+      note.textContent = state.error || state.last || 'You start in the juggler’s spot. Walk around the pattern, or use the left stick.';
     } else {
       b.disabled = true;
       b.textContent = state.checking ? 'Checking for a VR headset' : 'VR not available here';

@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>See the ideal juggling pattern in VR | Graham Paasch</title>
-<meta name="description" content="A WebXR juggling visualizer: any vanilla siteswap juggled the optimal way, with Jack Kalvan's math, real gravity, ghost hands and practice sounds. Works in a VR headset, on a laptop and on a phone.">
+<meta name="description" content="A WebXR juggling visualizer: cascades and fountains juggled the optimal way with Jack Kalvan's math, and any other vanilla siteswap with exact timing and heights. Real gravity, ghost hands and practice sounds. Works in a VR headset, on a laptop and on a phone.">
 <meta property="og:title" content="See the ideal juggling pattern in VR">
-<meta property="og:description" content="Any vanilla siteswap juggled the optimal way: Kalvan's math, real gravity, ghost hands, practice sounds. VR headset, laptop or phone.">
+<meta property="og:description" content="Cascades and fountains juggled the optimal way (Kalvan's math); any other vanilla siteswap with exact timing and heights. Real gravity, ghost hands, practice sounds. VR headset, laptop or phone.">
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://www.grahampaasch.com/juggling/vr">
 <meta name="twitter:card" content="summary">
@@ -33,6 +33,9 @@ body.panel-closed #status{left:12px}
 #patternBadge b{color:var(--ink);font-size:15px}
 #soundChip{font-size:12.5px;color:var(--a);background:rgba(13,16,23,.72);border:1px solid var(--line);border-radius:10px;padding:4px 9px}
 [hidden]{display:none!important}
+/* Shown where the 3D view would be when the browser cannot draw it */
+#stageMessage{position:fixed;top:0;bottom:0;right:0;left:var(--panel-w);display:grid;place-items:center;padding:28px;text-align:center;font-size:17px;line-height:1.5;color:var(--ink);z-index:2}
+body.no-3d #stage,body.no-3d #viewButtons,body.no-3d #status,body.no-3d #panel section,body.no-3d #panelClose{display:none}
 
 #viewButtons{position:fixed;right:12px;bottom:12px;display:flex;gap:8px;z-index:3}
 #viewButtons button,#panelOpen{background:rgba(21,26,36,.9);border:1px solid var(--line);border-radius:999px;padding:9px 14px;cursor:pointer}
@@ -62,7 +65,7 @@ section h2{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var
 #siteswapForm button{background:var(--a);border:0;border-radius:10px;padding:0 14px;color:#160d0a;font-weight:700;cursor:pointer}
 #siteswapError{color:#ffb3c4;font-size:13.5px;margin:0 0 8px;line-height:1.4}
 #infoTitle{font-size:17px;margin:0;color:var(--ink);letter-spacing:0;text-transform:none}
-#infoTag{display:inline-block;margin:4px 0 6px;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;padding:2px 8px;border-radius:999px;background:#12352f;color:var(--b)}
+#infoTag{display:inline-block;margin:4px 0 6px;font-size:11.5px;font-weight:700;letter-spacing:.06em;line-height:1.35;text-transform:uppercase;padding:3px 9px;border-radius:10px;background:#12352f;color:var(--b)}
 #infoTag.mixed{background:#352a12;color:var(--a)}
 #infoBody p{margin:6px 0;font-size:13.5px;color:#c9ccd3;line-height:1.45}
 table{border-collapse:collapse;width:100%;font-size:13.5px;margin:6px 0}
@@ -71,6 +74,10 @@ td:last-child,th:last-child{text-align:right;font-variant-numeric:tabular-nums}
 th{color:var(--mute);font-size:11.5px;text-transform:uppercase;letter-spacing:.06em}
 td.num{text-align:right;font-variant-numeric:tabular-nums}
 td small{color:var(--mute)}
+/* Computed here | printed by the source, side by side */
+table.compare td:nth-child(2),table.compare th:nth-child(2){text-align:right;font-variant-numeric:tabular-nums;padding-right:10px;white-space:nowrap}
+table.compare td:nth-child(3){color:var(--mute);white-space:nowrap}
+table.compare td:first-child{padding-right:6px}
 .ok{color:var(--b)}
 .bad{color:#ff9db3}
 input[type=range]{flex:1;min-width:90px;accent-color:var(--b);height:26px}
@@ -109,6 +116,8 @@ kbd{background:var(--card2);border:1px solid var(--line);border-radius:5px;paddi
   <div id="collisionBanner" role="status" hidden></div>
 </div>
 
+<div id="stageMessage" role="alert" hidden></div>
+
 <button id="panelOpen" type="button" hidden>Controls</button>
 
 <div id="viewButtons" role="group" aria-label="View">
@@ -120,7 +129,7 @@ kbd{background:var(--card2);border:1px solid var(--line);border-radius:5px;paddi
   <header>
     <div>
       <h1>See the ideal pattern</h1>
-      <p class="sub">Any siteswap, juggled the optimal way. Real gravity, always.</p>
+      <p class="sub">Cascades and fountains the optimal way; any other siteswap with exact timing and heights. Real gravity, always.</p>
     </div>
     <button id="panelClose" type="button">Hide</button>
   </header>
@@ -149,6 +158,7 @@ kbd{background:var(--card2);border:1px solid var(--line);border-radius:5px;paddi
         <button type="button" class="chip" data-pattern="456">456</button>
       </div>
     </div>
+    <p class="note">One character per throw. Ten and up are letters: a is 10, b is 11.</p>
   </section>
 
   <section aria-labelledby="infoTitle">
@@ -208,10 +218,10 @@ kbd{background:var(--card2);border:1px solid var(--line);border-radius:5px;paddi
 
   <section aria-labelledby="h-calib">
     <h2 id="h-calib">Calibration</h2>
-    <p class="note" style="margin-top:0">In VR: hold the controllers where you naturally catch and pull a trigger. Fine-tune here.</p>
+    <p class="note" style="margin-top:0">In VR: hold both controllers where you naturally catch and pull a trigger. Fine-tune here. It is remembered for the posture you were in (standing or sitting).</p>
     <label class="line"><span class="name">Hand height</span><input type="range" id="handHeight" min="10" max="190" step="1"><span class="val" id="handHeightVal"></span></label>
     <label class="line"><span class="name">From body</span><input type="range" id="distance" min="15" max="80" step="1"><span class="val" id="distanceVal"></span></label>
-    <p class="note">Palm nudge (VR): move the landing point until a ball resting in your hand feels like it is in your palm.</p>
+    <p class="note">Palm nudge (VR): move the landing point until a ball resting in your hand feels like it is in your palm. The pattern moves with it.</p>
     <label class="line"><span class="name">To palm</span><input type="range" id="nudgePalm" min="-60" max="60" step="5"><span class="val" id="nudgePalmVal"></span></label>
     <label class="line"><span class="name">To wrist</span><input type="range" id="nudgeWrist" min="-60" max="60" step="5"><span class="val" id="nudgeWristVal"></span></label>
     <label class="line"><span class="name">To thumb</span><input type="range" id="nudgeThumb" min="-60" max="60" step="5"><span class="val" id="nudgeThumbVal"></span></label>

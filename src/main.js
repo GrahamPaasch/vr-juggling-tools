@@ -1,17 +1,30 @@
 /**
  * main.js: wires the pieces together.
  *
- *   physics.js  the math (pure)            hands.js   ghost hand paths (pure)
- *   scene.js    three.js drawing           view.js    flat-screen camera
- *   xr.js       WebXR, controllers         vrpanel.js the control board inside VR
- *   audio.js    the three sounds           ui.js      the on-page controls
+ *   physics.js   the math (pure)                 hands.js       ghost hand paths (pure)
+ *   schedule.js  the clock, sound timing (pure)  calibration.js calibration rules (pure)
+ *   scene.js     three.js drawing                view.js        flat-screen camera
+ *   xr.js        WebXR, controllers              vrpanel.js     the control board inside VR
+ *   audio.js     the three sounds                ui.js          the on-page controls
  *
  * There is exactly one clock: simulation time advances by (real time x speed). Slow motion is
  * that and nothing else, so arcs, heights and gravity are identical at every speed.
  */
 
-import { buildPattern, findCollisions, eventsBetween } from './physics.js';
+import { buildPattern, findCollisions } from './physics.js';
 import { buildHandTimeline } from './hands.js';
+import { advanceClock, clampSpeed, SoundSchedule } from './schedule.js';
+import {
+  DEFAULT_PLACEMENT,
+  clampHandHeight,
+  clampDistance,
+  clampNudge,
+  fitsPosture,
+  provisionalPlacement,
+  measure,
+  nudgeShift,
+  restoreCalibration,
+} from './calibration.js';
 import { Stage, THREE } from './scene.js';
 import { FlatView } from './view.js';
 import { SoundBoard, SOUND_TYPES } from './audio.js';
@@ -22,15 +35,6 @@ const STORAGE_KEY = 'vr-juggling-visualizer.v1';
 const AUDIO_LOOKAHEAD = 0.2; // seconds of real time scheduled ahead on the audio clock
 const AUDIO_MARGIN = 0.05; // of which this much is never spent on compensating output latency
 
-/**
- * Where the pattern sits before anyone calibrates. Placeholders for a standing adult, not physics:
- * the math only cares about height above the hands. Calibration and the sliders replace them.
- */
-const DEFAULT_ANCHOR = { spotX: 0, spotZ: 0, yaw: 0, handHeight: 1.05, distance: 0.35, eyeHeight: 1.65 };
-const HAND_BELOW_EYES = 0.6; // provisional hand height in VR before calibration: this far below the head
-const HAND_HEIGHT_RANGE = [0.1, 1.9]; // metres above the floor (low enough for sitting on a bed)
-const DISTANCE_RANGE = [0.15, 0.8]; // metres in front of the head
-
 const state = {
   pattern: null,
   timeline: null,
@@ -40,16 +44,30 @@ const state = {
   simTime: 0,
   view: 'eye',
   show: { ghost: true, arcs: true, mine: true },
-  anchor: Object.assign({}, DEFAULT_ANCHOR),
-  calibrated: false,
+
+  /**
+   * What is remembered between visits. Only three things change it: a trigger calibration, the
+   * fine-tune controls, and Reset. `done` says a person calibrated in VR, at eye height
+   * `eyeHeight`; `frames` is how they held their hands then (see calibration.js).
+   */
+  calibration: { done: false, handHeight: DEFAULT_PLACEMENT.handHeight, distance: DEFAULT_PLACEMENT.distance, eyeHeight: DEFAULT_PLACEMENT.eyeHeight, frames: null, palmChecked: false },
+
+  /**
+   * Where the pattern is drawn right now. On the flat page this is the calibration with the
+   * juggler at the origin. In VR the spot and heading are where the person stands, and the hand
+   * height and distance are either the calibration or, while `provisional`, a first guess for a
+   * posture nobody has calibrated in. A guess is shown but never saved.
+   */
+  anchor: { spotX: 0, spotZ: 0, yaw: 0, handHeight: DEFAULT_PLACEMENT.handHeight, distance: DEFAULT_PLACEMENT.distance, eyeHeight: DEFAULT_PLACEMENT.eyeHeight },
+  provisional: false,
+
   nudge: { palm: 0, wrist: 0, thumb: 0 },
   handTracking: false,
   palmBall: false,
   typed: '',
   vrMessage: '',
   vrMessageUntil: 0,
-  vr: { checking: true, supported: false, presenting: false, reason: '', error: '', calibrating: false },
-  audioHorizon: 0,
+  vr: { checking: true, supported: false, starting: false, presenting: false, reason: '', error: '', last: '', calibrating: false, palmStep: false, hands: false },
   displayLead: 0, // seconds from now until the current frame is shown (VR only), for diagnostics
 };
 
@@ -58,6 +76,7 @@ let view;
 let audio;
 let xr;
 let ui;
+const schedule = new SoundSchedule(AUDIO_LOOKAHEAD);
 
 let audioWasRunning = false;
 let soundFailed = false;
@@ -72,9 +91,8 @@ function start() {
   try {
     stage = new Stage(canvas);
   } catch (err) {
-    document.getElementById('vrNote').textContent =
-      'This browser could not start WebGL, which the 3D view needs. (' + (err && err.message ? err.message : err) + ')';
     console.error(err);
+    showNo3D(err);
     return;
   }
   view = new FlatView(stage);
@@ -92,13 +110,15 @@ function start() {
         // Solo is a training mode for one sitting; like the speed, it is not restored.
       }
     }
-    if (typeof saved.handHeight === 'number') state.anchor.handHeight = saved.handHeight;
-    if (typeof saved.distance === 'number') state.anchor.distance = saved.distance;
-    if (typeof saved.eyeHeight === 'number') state.anchor.eyeHeight = saved.eyeHeight;
-    if (saved.nudge) Object.assign(state.nudge, saved.nudge);
-    state.calibrated = !!saved.calibrated;
+    state.calibration = restoreCalibration(saved);
+    if (saved.nudge) {
+      for (const key of ['palm', 'wrist', 'thumb']) {
+        if (typeof saved.nudge[key] === 'number' && Number.isFinite(saved.nudge[key])) state.nudge[key] = clampNudge(saved.nudge[key]);
+      }
+    }
     state.handTracking = !!saved.handTracking;
   }
+  showCalibration();
 
   ui = new FlatUI({
     onPattern: (text) => setPattern(text),
@@ -124,6 +144,9 @@ function start() {
   xr = new XRControl(stage, {
     onSessionStart: () => {
       state.vr.presenting = true;
+      state.vr.error = ''; // whatever went wrong before, this session is running
+      state.vr.last = '';
+      vrFailed = false;
       audio.unlock();
       ui.setVR(state.vr);
       xr.setSpeedLabel(state.speed);
@@ -131,13 +154,17 @@ function start() {
     onSessionEnd: () => {
       state.vr.presenting = false;
       state.vr.calibrating = false;
-      // Back on the flat screen the juggler's spot is the origin again. Hand height, eye height
-      // and distance stay as measured, so the flat juggler's-eye view matches the person.
+      state.vr.palmStep = false;
+      state.palmBall = false;
+      xr.setPalmBall(false);
+      state.vr.last = describeSession(xr.sessionReport());
+      // Back on the flat screen the juggler's spot is the origin again, and the pattern sits
+      // where the remembered calibration puts it. A guess made for this session is dropped.
       state.anchor.spotX = 0;
       state.anchor.spotZ = 0;
       state.anchor.yaw = 0;
+      showCalibration();
       applyAnchor(true);
-      save();
       ui.setVR(state.vr);
       layout();
     },
@@ -148,9 +175,13 @@ function start() {
     onPanel: (id) => panelAction(id),
     onMenu: () => {
       if (state.vr.calibrating) {
+        // Skipped: the pattern stays where it is, and nothing is recorded.
         state.vr.calibrating = false;
+        showPalmBall(false);
         xr.prompt('', 0);
         xr.summonPanel('front');
+      } else if (state.vr.palmStep) {
+        endPalmStep();
       } else {
         xr.togglePanel();
       }
@@ -173,6 +204,8 @@ function start() {
   }
   if (!loaded) setPattern('3');
   if (params.get('view') === 'orbit') state.view = 'orbit';
+  // ?layers=off: draw VR through a plain WebGL layer (see README, "First time in the headset").
+  if (params.get('layers') === 'off') xr.plainLayer = true;
   applyAnchor(true);
 
   ui.setSpeed(state.speed);
@@ -199,7 +232,7 @@ function start() {
     const now = performance.now();
     const dt = Math.min((now - last) / 1000, 0.1);
     last = now;
-    state.simTime += dt * state.speed;
+    state.simTime = advanceClock(state.simTime, dt, state.speed);
     // A headset shows this frame a little later, at a time it tells us. Draw the balls where
     // they will be then, so they line up with the tracked hands and with the sound.
     let lead = 0;
@@ -208,21 +241,43 @@ function start() {
       if (ahead > 0 && ahead < 0.1) lead = ahead;
     }
     state.displayLead = lead;
-    frame(dt, now, lead);
+    frame(dt, now, lead, xrFrame);
   });
 
   // For the smoke test and for poking at the app from a console.
-  window.__vrj = { state, stage, view, audio, xr, ui, setPattern, setSpeed, setView, calibrate, panelAction, THREE };
+  window.__vrj = { state, stage, view, audio, xr, ui, schedule, setPattern, setSpeed, setView, calibrate, panelAction, THREE };
 }
 
-function frame(dt, now, lead) {
+/** The browser cannot draw 3D at all: say so where the picture would be, and offer nothing dead. */
+function showNo3D(err) {
+  document.body.classList.add('no-3d');
+  const message = document.getElementById('stageMessage');
+  message.textContent =
+    'This browser could not start WebGL, which the 3D view needs. Try another browser, or switch hardware acceleration on in this one.';
+  message.hidden = false;
+  const button = document.getElementById('enterVR');
+  button.disabled = true;
+  button.textContent = '3D view not available';
+  document.getElementById('vrNote').textContent = 'What the browser said: ' + (err && err.message ? err.message : err);
+  document.getElementById('soundChip').hidden = true;
+  document.getElementById('soundHint').hidden = true;
+}
+
+function frame(dt, now, lead, xrFrame) {
   if (xr.presenting) {
     try {
-      xr.update(dt);
+      xr.update(dt, xrFrame);
       // Show the faint head at the juggler's spot once the person has stepped away from it.
       const head = xr.headPosition(tmpCam);
-      stage.ghostHead.visible = Math.hypot(head.x - state.anchor.spotX, head.z - state.anchor.spotZ) > 0.6;
+      stage.ghostHead.visible = xr.placed && Math.hypot(head.x - state.anchor.spotX, head.z - state.anchor.spotZ) > 0.6;
       if (state.vrMessage && performance.now() > state.vrMessageUntil) state.vrMessage = '';
+      // Controllers and tracked hands are announced a little after the session starts, and can
+      // change during it: keep the standing instruction in the words that fit.
+      const hands = xr.usingHands();
+      if (hands !== state.vr.hands) {
+        state.vr.hands = hands;
+        if (state.vr.calibrating) xr.prompt(calibrationPrompt(), 0);
+      }
       xr.panel.setModel(panelModel());
     } catch (err) {
       // Whatever went wrong, the view must keep following the head.
@@ -270,8 +325,7 @@ function setPattern(text, options) {
   state.description = ui.setPattern(pattern, state.collisions);
   view.setTarget(state.anchor, patternHeight(), false);
   view.retarget();
-  audio.cancelPending();
-  state.audioHorizon = state.simTime;
+  restartSounds();
 
   try {
     const url = new URL(location.href);
@@ -297,12 +351,13 @@ function patternHeight() {
 }
 
 function setSpeed(value) {
-  const v = Math.min(Math.max(Math.round(value * 100) / 100, 0.1), 1);
-  state.speed = v;
+  const v = clampSpeed(value);
+  if (v !== state.speed) {
+    state.speed = v;
+    restartSounds();
+  }
   ui.setSpeed(v);
   xr.setSpeedLabel(v);
-  audio.cancelPending();
-  state.audioHorizon = state.simTime;
 }
 
 function setView(mode) {
@@ -330,9 +385,9 @@ function setSound(type, patch) {
     for (const t of SOUND_TYPES) audio.settings[t].solo = false; // one solo at a time
     s.solo = next;
   }
-  // Re-schedule what is already queued, so the change is heard at once.
-  audio.cancelPending();
-  state.audioHorizon = state.simTime;
+  // Each sound type has its own gain, so the change is heard at once, also on sounds that are
+  // already scheduled. Nothing is scheduled again (that is how sounds got doubled).
+  audio.applySettings();
   ui.setSound(audio.settings, audio.running);
   save();
 }
@@ -349,27 +404,62 @@ function applyAnchor(resetLook) {
   ui.setCalibration(state.anchor, state.nudge, state.handTracking);
 }
 
+/** Draw the pattern where the remembered calibration puts it (the spot and heading stay). */
+function showCalibration() {
+  state.anchor.handHeight = state.calibration.handHeight;
+  state.anchor.distance = state.calibration.distance;
+  state.anchor.eyeHeight = state.calibration.eyeHeight;
+  state.provisional = false;
+}
+
+/** The fine-tune sliders (page) and plus/minus buttons (VR board). */
 function setCalibrationValue(key, value) {
-  if (key === 'handHeight') state.anchor.handHeight = Math.min(Math.max(value, HAND_HEIGHT_RANGE[0]), HAND_HEIGHT_RANGE[1]);
-  if (key === 'distance') state.anchor.distance = Math.min(Math.max(value, DISTANCE_RANGE[0]), DISTANCE_RANGE[1]);
+  const a = state.anchor;
+  if (key === 'handHeight') a.handHeight = clampHandHeight(value);
+  if (key === 'distance') a.distance = clampDistance(value);
+  // What is on screen is what is remembered. In VR that makes a guessed placement the person
+  // has adjusted by hand their calibration for this posture.
+  const c = state.calibration;
+  c.handHeight = a.handHeight;
+  c.distance = a.distance;
+  if (xr.presenting && xr.placed) {
+    c.eyeHeight = a.eyeHeight;
+    c.done = true;
+  }
+  state.provisional = false;
   applyAnchor(false);
   save();
 }
 
+/**
+ * Palm nudge. The pattern moves with the palm point, so that a ball still lands in the palm of a
+ * hand held where it was at calibration.
+ */
 function setNudge(key, value) {
-  state.nudge[key] = Math.min(Math.max(value, -0.06), 0.06);
+  const before = { palm: state.nudge.palm, wrist: state.nudge.wrist, thumb: state.nudge.thumb };
+  state.nudge[key] = clampNudge(value);
   xr.setNudge(state.nudge);
-  ui.setCalibration(state.anchor, state.nudge, state.handTracking);
+  const c = state.calibration;
+  if (c.done && c.frames) {
+    const shift = nudgeShift(c.frames, before, state.nudge);
+    const height = clampHandHeight(c.handHeight + shift.up);
+    const distance = clampDistance(c.distance + shift.out);
+    if (!state.provisional) {
+      state.anchor.handHeight += height - c.handHeight;
+      state.anchor.distance += distance - c.distance;
+    }
+    c.handHeight = height;
+    c.distance = distance;
+  }
+  applyAnchor(false);
   save();
 }
 
 function resetCalibration() {
-  state.anchor.handHeight = DEFAULT_ANCHOR.handHeight;
-  state.anchor.distance = DEFAULT_ANCHOR.distance;
-  state.anchor.eyeHeight = DEFAULT_ANCHOR.eyeHeight;
+  state.calibration = restoreCalibration(null);
   state.nudge = { palm: 0, wrist: 0, thumb: 0 };
-  state.calibrated = false;
   xr.setNudge(state.nudge);
+  showCalibration();
   applyAnchor(false);
   save();
 }
@@ -381,66 +471,120 @@ function placeInVR(sample) {
   a.spotZ = sample.head.z;
   a.yaw = sample.headYaw;
   a.eyeHeight = sample.head.y;
-  // A saved calibration is reused only if it still fits this posture (standing vs sitting).
-  const fits = state.calibrated && a.handHeight < sample.head.y - 0.2 && a.handHeight > sample.head.y - 1.1;
-  if (!fits) {
-    a.handHeight = Math.max(HAND_HEIGHT_RANGE[0], sample.head.y - HAND_BELOW_EYES);
-    a.distance = DEFAULT_ANCHOR.distance;
+  // A remembered calibration is used again only in the posture it was made in (standing or
+  // sitting). Otherwise a first guess is shown, and calibrating is asked for.
+  const fits = fitsPosture(state.calibration, sample.head.y);
+  if (fits) {
+    a.handHeight = state.calibration.handHeight;
+    a.distance = state.calibration.distance;
+    state.provisional = false;
+  } else {
+    const guess = provisionalPlacement(sample.head.y);
+    a.handHeight = guess.handHeight;
+    a.distance = guess.distance;
+    state.provisional = true;
   }
   applyAnchor(false);
   if (fits) {
     xr.summonPanel('side');
-    xr.prompt('Controls: on your left,\nor press A or X to bring them in front', 6);
+    xr.prompt(xr.usingHands() ? 'Controls: on your left' : 'Controls: on your left,\nor press A or X to bring them in front', 6);
   } else {
     beginCalibration();
   }
 }
 
+/** A white ball resting in each of the person's hands, to judge the palm point by. */
+function showPalmBall(on) {
+  state.palmBall = on;
+  xr.setPalmBall(on);
+}
+
+function calibrationPrompt() {
+  return xr.usingHands()
+    ? 'Hold both hands where you catch,\nthen pinch finger and thumb together'
+    : 'Hold both controllers where you catch,\nthen pull a trigger   (A or X skips)';
+}
+
 function beginCalibration() {
   state.vr.calibrating = true;
-  xr.hidePanel();
-  xr.prompt('Hold both controllers where you catch,\nthen pull a trigger   (A or X skips)', 0);
+  state.vr.palmStep = false;
+  xr.hidePanel(); // out of the way of the trigger
+  showPalmBall(true); // so the person sees where a ball will land while they hold the pose
+  xr.prompt(calibrationPrompt(), 0);
 }
 
 /**
  * Trigger press during calibration. Records what the spec asks for: hand height, and how far in
  * front of the body the hands are. The juggler's spot moves to where the person is standing and
- * the pattern faces the way their hands are from their head.
+ * the pattern faces the way their hands are from their head. Both hands are needed.
  */
 function calibrate(sample) {
-  const palms = sample.palms.filter(Boolean);
-  if (palms.length === 0) {
-    xr.prompt('No controller is tracked yet.\nHold them in view and pull a trigger', 0);
+  if (!xr.hasPose()) return false;
+  const m = measure(sample);
+  if (!m.ok) {
+    if (m.reason === 'untrackable') {
+      // Nothing here can be held where the hands catch (a phone in a viewer, say): leave the
+      // pattern where it is, record nothing.
+      state.vr.calibrating = false;
+      showPalmBall(false);
+      xr.prompt('No hand controllers here.\nThe pattern stays in a standard place;\nadjust it with the sliders on the page', 8);
+      xr.summonPanel('side');
+      return false;
+    }
+    const hands = xr.usingHands();
+    const thing = hands ? 'hand' : 'controller';
+    const missing = m.reason === 'both' ? 'Neither ' + thing + ' is' : 'The ' + m.reason + ' ' + thing + ' is not';
+    xr.prompt(
+      missing + ' tracked yet.\nHold both where you catch, then\n' + (hands ? 'pinch finger and thumb together' : 'pull a trigger   (A or X skips)'),
+      0
+    );
     return false;
   }
-  let mx = 0;
-  let my = 0;
-  let mz = 0;
-  for (const p of palms) {
-    mx += p.x / palms.length;
-    my += p.y / palms.length;
-    mz += p.z / palms.length;
-  }
-  const dx = mx - sample.head.x;
-  const dz = mz - sample.head.z;
-  const out = Math.hypot(dx, dz);
   const a = state.anchor;
-  a.spotX = sample.head.x;
-  a.spotZ = sample.head.z;
-  a.eyeHeight = sample.head.y;
-  a.yaw = out > 0.08 ? Math.atan2(-dx, -dz) : sample.headYaw;
-  a.distance = Math.min(Math.max(out, DISTANCE_RANGE[0]), DISTANCE_RANGE[1]);
-  a.handHeight = Math.min(Math.max(my, HAND_HEIGHT_RANGE[0]), HAND_HEIGHT_RANGE[1]);
-  state.calibrated = true;
+  a.spotX = m.spotX;
+  a.spotZ = m.spotZ;
+  a.yaw = m.yaw;
+  a.eyeHeight = m.eyeHeight;
+  a.handHeight = m.handHeight;
+  a.distance = m.distance;
+  const c = state.calibration;
+  c.done = true;
+  c.handHeight = m.handHeight;
+  c.distance = m.distance;
+  c.eyeHeight = m.eyeHeight;
+  c.frames = m.frames;
+  state.provisional = false;
   state.vr.calibrating = false;
   applyAnchor(false);
   save();
-  xr.prompt(
-    'Calibrated: hands ' + a.handHeight.toFixed(2) + ' m high, ' + a.distance.toFixed(2) + ' m out.\nControls: on your left, or press A or X',
-    6
-  );
-  xr.summonPanel('side');
+  const measured = 'Calibrated: hands ' + a.handHeight.toFixed(2) + ' m high, ' + a.distance.toFixed(2) + ' m out.';
+  if (!c.palmChecked) {
+    // The first time, calibration goes on to the palm: is the ball where the hand feels it?
+    state.vr.palmStep = true;
+    showPalmBall(true);
+    xr.summonPanel('front');
+    // The words go away after half a minute (they sit low in the view, where the hands are);
+    // the balls in the hands and the board in front stay until the step is ended.
+    xr.prompt(
+      measured + '\nIs the ball in each palm? If not, nudge it\non the board. Then press ' + (xr.usingHands() ? '"palm ball".' : 'A or X.'),
+      30
+    );
+  } else {
+    showPalmBall(false);
+    xr.prompt(measured + '\nControls: on your left' + (xr.usingHands() ? '' : ', or press A or X'), 6);
+    xr.summonPanel('side');
+  }
   return true;
+}
+
+/** The person is content with where the ball rests in the hand. */
+function endPalmStep() {
+  state.vr.palmStep = false;
+  state.calibration.palmChecked = true;
+  showPalmBall(false);
+  save();
+  xr.summonPanel('side');
+  xr.prompt(xr.usingHands() ? 'Controls: on your left' : 'Controls: on your left,\nor press A or X to bring them in front', 6);
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -452,36 +596,69 @@ async function toggleVR() {
     xr.exit();
     return;
   }
+  if (xr.starting) return; // one request at a time: a second press changes nothing
   audio.unlock();
   state.vr.error = '';
+  state.vr.starting = true;
+  ui.setVR(state.vr);
   try {
     await xr.enter();
   } catch (err) {
     console.warn('Could not start VR', err);
     state.vr.error = 'Could not start VR: ' + (err && err.message ? err.message : err);
-    ui.setVR(state.vr);
   }
+  state.vr.starting = false;
+  ui.setVR(state.vr);
 }
 
+/** One line about the session that just ended, for the note under the button. */
+function describeSession(report) {
+  if (!report) return '';
+  return (
+    'Last VR session: ' + report.fps.toFixed(0) + ' frames a second on average, slowest frame ' + report.slowestMs.toFixed(0) +
+    ' ms, drawn through ' + report.renderPath + '.'
+  );
+}
+
+const board = {
+  title: '',
+  status: '',
+  statusKind: '',
+  pattern: '',
+  typed: '',
+  speed: 1,
+  sound: null,
+  calibrating: false,
+  handHeight: 0,
+  distance: 0,
+  nudge: null,
+  palmBall: false,
+  showArcs: true,
+  showGhost: true,
+  showMyHands: true,
+  hands: false,
+};
+
+/** What the VR board shows. One object, filled in again each frame (no garbage). */
 function panelModel() {
   const d = state.description;
-  return {
-    title: d.title,
-    status: state.vrMessage || d.vrStatus,
-    statusKind: state.vrMessage ? 'warn' : d.vrStatusKind,
-    pattern: state.pattern.text,
-    typed: state.typed,
-    speed: state.speed,
-    sound: audio.settings,
-    calibrating: state.vr.calibrating,
-    handHeight: state.anchor.handHeight,
-    distance: state.anchor.distance,
-    nudge: state.nudge,
-    palmBall: state.palmBall,
-    showArcs: state.show.arcs,
-    showGhost: state.show.ghost,
-    showMyHands: state.show.mine,
-  };
+  board.title = d.title;
+  board.status = state.vrMessage || d.vrStatus;
+  board.statusKind = state.vrMessage ? 'warn' : d.vrStatusKind;
+  board.pattern = state.pattern.text;
+  board.typed = state.typed;
+  board.speed = state.speed;
+  board.sound = audio.settings;
+  board.calibrating = state.vr.calibrating;
+  board.handHeight = state.anchor.handHeight;
+  board.distance = state.anchor.distance;
+  board.nudge = state.nudge;
+  board.palmBall = state.palmBall;
+  board.showArcs = state.show.arcs;
+  board.showGhost = state.show.ghost;
+  board.showMyHands = state.show.mine;
+  board.hands = state.vr.hands;
+  return board;
 }
 
 function panelAction(id) {
@@ -499,7 +676,8 @@ function panelAction(id) {
     setSpeed(Number(parts[1]));
   } else if (kind === 'vol') {
     const s = audio.settings[parts[1]];
-    setSound(parts[1], { volume: Math.round((s.volume + (parts[2] === '+' ? 0.1 : -0.1)) * 10) / 10 });
+    // Steps of 10%, on the 5% grid the page's sliders use (the release starts at 65%).
+    setSound(parts[1], { volume: Math.round((s.volume + (parts[2] === '+' ? 0.1 : -0.1)) * 20) / 20 });
   } else if (kind === 'mute') {
     setSound(parts[1], { toggle: 'on' });
   } else if (kind === 'solo') {
@@ -511,8 +689,8 @@ function panelAction(id) {
   } else if (kind === 'distance') {
     setCalibrationValue('distance', state.anchor.distance + (parts[1] === '+' ? 0.01 : -0.01));
   } else if (kind === 'palmball') {
-    state.palmBall = !state.palmBall;
-    xr.setPalmBall(state.palmBall);
+    if (state.vr.palmStep) endPalmStep();
+    else showPalmBall(!state.palmBall);
   } else if (kind === 'nudge') {
     setNudge(parts[1], state.nudge[parts[1]] + (parts[2] === '+' ? 0.005 : -0.005));
   } else if (kind === 'toggle') {
@@ -530,20 +708,23 @@ function panelAction(id) {
 // ---------------------------------------------------------------------------------------------
 
 /**
+ * The speed or the pattern changed: take back the sounds that have not started and schedule from
+ * here again. Sounds that have already started keep playing and are not scheduled again.
+ */
+function restartSounds() {
+  schedule.restart(state.simTime, audio.cancelPending());
+}
+
+/**
  * Hand every sound event in the next AUDIO_LOOKAHEAD of real time to the audio clock. `now` is
  * the page time (performance.now) that state.simTime corresponds to.
  */
 function scheduleSounds(now) {
   if (!audio.running || !state.pattern || !(state.speed > 0)) {
-    state.audioHorizon = state.simTime;
+    schedule.restart(state.simTime, -Infinity);
     return;
   }
-  const horizon = state.simTime + AUDIO_LOOKAHEAD * state.speed;
-  if (horizon <= state.audioHorizon) return;
-  // After a stall (hidden tab) skip what was missed instead of playing it late in a burst.
-  const from = Math.max(state.audioHorizon, state.simTime - 0.02);
-  const events = eventsBetween(state.pattern, from, horizon);
-  state.audioHorizon = horizon;
+  const events = schedule.due(state.pattern, state.simTime, state.speed);
   if (events.length === 0) return;
 
   stage.camera.getWorldPosition(tmpCam);
@@ -555,7 +736,7 @@ function scheduleSounds(now) {
     tmpWorld.set(e.x, e.y, 0);
     stage.anchor.localToWorld(tmpWorld);
     const side = tmpWorld.sub(tmpCam).dot(tmpRight);
-    audio.play(e.type, when, Math.min(Math.max(side / 0.5, -1), 1) * 0.8, e.height);
+    audio.play(e.type, when, Math.min(Math.max(side / 0.5, -1), 1) * 0.8, e.height, e.time);
   }
 }
 
@@ -586,18 +767,22 @@ function load() {
   }
 }
 
+/** Remember the settings. The calibration is saved as calibrated, never as currently drawn. */
 function save() {
   try {
+    const c = state.calibration;
     localStorage.setItem(
       STORAGE_KEY,
       JSON.stringify({
         text: state.pattern ? state.pattern.text : '3',
         show: state.show,
         sound: audio.settings,
-        handHeight: state.anchor.handHeight,
-        distance: state.anchor.distance,
-        eyeHeight: state.anchor.eyeHeight,
-        calibrated: state.calibrated,
+        handHeight: c.handHeight,
+        distance: c.distance,
+        eyeHeight: c.eyeHeight,
+        calibrated: c.done,
+        frames: c.frames,
+        palmChecked: c.palmChecked,
         nudge: state.nudge,
         handTracking: state.handTracking,
       })
@@ -612,4 +797,3 @@ if (document.readyState === 'loading') {
 } else {
   start();
 }
-

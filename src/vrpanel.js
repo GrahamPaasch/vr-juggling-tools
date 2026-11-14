@@ -29,6 +29,7 @@ const C = {
 };
 
 const FONT = 'system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif';
+const SOUND_ROWS = ['catch', 'release', 'peak'];
 
 export class VRPanel {
   constructor() {
@@ -71,12 +72,14 @@ export class VRPanel {
 
     this.buttons = [];
     this.model = null;
-    this.modelKey = '';
+    this.shown = []; // what the canvas shows now, value by value (see setModel)
+    this.next = [];
     this.hover = [null, null];
 
     this.inverse = new THREE.Matrix4();
     this.localOrigin = new THREE.Vector3();
     this.localDir = new THREE.Vector3();
+    this.hits = [0, 1].map(() => ({ distance: 0, button: null, u: 0, v: 0 })); // reused: point() runs every frame
   }
 
   get width() {
@@ -87,11 +90,44 @@ export class VRPanel {
     return PANEL_HEIGHT;
   }
 
-  /** Redraw if anything shown has changed. */
+  /**
+   * Redraw if anything shown has changed. Called every frame with the same object, so the
+   * comparison is value by value and makes no garbage.
+   */
   setModel(model) {
-    const key = JSON.stringify(model);
-    if (key === this.modelKey) return;
-    this.modelKey = key;
+    const v = this.next;
+    let n = 0;
+    v[n++] = model.title;
+    v[n++] = model.status;
+    v[n++] = model.statusKind;
+    v[n++] = model.pattern;
+    v[n++] = model.typed;
+    v[n++] = model.speed;
+    for (const type of SOUND_ROWS) {
+      const s = model.sound[type];
+      v[n++] = s.on;
+      v[n++] = s.volume;
+      v[n++] = s.solo;
+    }
+    v[n++] = model.calibrating;
+    v[n++] = model.handHeight;
+    v[n++] = model.distance;
+    v[n++] = model.nudge.palm;
+    v[n++] = model.nudge.wrist;
+    v[n++] = model.nudge.thumb;
+    v[n++] = model.palmBall;
+    v[n++] = model.showArcs;
+    v[n++] = model.showGhost;
+    v[n++] = model.showMyHands;
+    v[n++] = model.hands;
+    v.length = n;
+
+    const shown = this.shown;
+    let same = this.model !== null && shown.length === n;
+    for (let i = 0; same && i < n; i++) same = shown[i] === v[i];
+    if (same) return;
+    this.next = shown;
+    this.shown = v;
     this.model = model;
     this.draw();
   }
@@ -99,6 +135,7 @@ export class VRPanel {
   /**
    * Where does a pointing ray (world space) hit the panel?
    * Returns null, or { distance, button (or null), u, v } and updates that pointer's highlight.
+   * The object returned is that pointer's own and is overwritten by its next call.
    */
   point(pointer, origin, direction) {
     const highlight = this.highlights[pointer];
@@ -130,7 +167,12 @@ export class VRPanel {
       highlight.visible = true;
     }
     this.hover[pointer] = button;
-    return { distance: s, button, u, v };
+    const hit = this.hits[pointer];
+    hit.distance = s;
+    hit.button = button;
+    hit.u = u;
+    hit.v = v;
+    return hit;
   }
 
   clearPointer(pointer) {
@@ -233,7 +275,7 @@ export class VRPanel {
     y += H + G;
 
     // Sounds.
-    for (const type of ['catch', 'release', 'peak']) {
+    for (const type of SOUND_ROWS) {
       const s = m.sound[type];
       const label = type === 'catch' ? 'Catch' : type === 'release' ? 'Release' : 'Peak tone';
       this.text(ctx, label, M + 4, y + H / 2, { size: 28, color: C.ink });
@@ -298,7 +340,10 @@ export class VRPanel {
     ]);
     y += H + G;
 
-    this.text(ctx, 'A or X: bring this board in front of you, or hide it.  Left stick: move.  Right stick: turn.', CW / 2, y + 26, {
+    const help = m.hands
+      ? 'Point with a hand and pinch finger and thumb to press.  This board stays on your left.'
+      : 'A or X: bring this board in front of you, or hide it.  Left stick: move.  Right stick: turn.';
+    this.text(ctx, help, CW / 2, y + 26, {
       size: 23,
       color: C.mute,
       align: 'center',

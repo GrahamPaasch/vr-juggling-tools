@@ -2,12 +2,17 @@
  * audio.js: the three practice sounds, synthesised with the Web Audio API (no audio files).
  *
  *   catch    a ball landing in a palm: a soft, low thud.
- *   release  the ball leaving the hand: a short, light brush. Quieter than the catch by default.
+ *   release  the ball leaving the hand: a short, light brush. A little quieter than the catch by
+ *            default.
  *   peak     a short tone at the exact top of each arc. Its pitch follows the height above the
  *            hands, so a 5 sounds higher than a 3 and 531 has a melody.
  *
  * Each sound has its own volume, on/off and solo. Events are scheduled on the audio clock a
  * little ahead of time, so the rhythm is as even as the math, not as even as the frame rate.
+ *
+ * Each sound type plays through its own gain node (its "bus"). Volume, mute and solo only set
+ * that gain, so a change is heard at once, also on sounds that are already scheduled, and nothing
+ * ever has to be scheduled a second time.
  *
  * Slow motion never changes the sounds themselves, only how far apart they are.
  */
@@ -16,12 +21,29 @@ export const SOUND_TYPES = ['catch', 'release', 'peak'];
 
 export const DEFAULT_SOUND = {
   catch: { on: true, volume: 0.8, solo: false },
-  release: { on: true, volume: 0.5, solo: false }, // "a little quieter than catch"
+  release: { on: true, volume: 0.65, solo: false }, // "a little quieter than catch": about 4 dB
   peak: { on: true, volume: 0.45, solo: false },
 };
 
-/** Loudness of each sound at full volume, balanced by ear against each other. */
-const BASE_LEVEL = { catch: 0.9, release: 0.5, peak: 0.32 };
+/**
+ * Loudness of each sound with its slider at 100%. Sound design, not physics.
+ *
+ * Catch and release are matched: at equal slider positions they measure equally loud, A-weighted
+ * (the release level was set from offline renders, see README "Sound levels"). So the sliders
+ * mean the same thing, and the default 65% against 80% puts the release about 4 dB under the
+ * catch as the ear and a small speaker hear it. A plain peak or RMS meter reads it 9 to 16 dB
+ * under, because most of the catch's energy is a thump below 200 Hz.
+ */
+export const BASE_LEVEL = { catch: 0.9, release: 0.78, peak: 0.32 };
+
+/** A sound whose start is nearer than this (seconds) can no longer be taken back. */
+const CANCEL_MARGIN = 0.005;
+
+/**
+ * How long after its start a sound stays on the list of pending sounds (seconds). Longer than any
+ * output latency sounds are advanced by (main.js allows 0.15 s).
+ */
+const KEEP_AFTER_START = 0.3;
 
 /**
  * Pitch of the peak tone for a throw that rises `height` metres above the hands.
@@ -33,12 +55,18 @@ export function peakFrequency(height) {
   return 220 + 440 * Math.sqrt(Math.max(height, 0));
 }
 
-/** The gain actually applied to one sound type, given mute and solo. */
+/** The slider position that counts for one sound type, given mute and solo (0 = silent). */
 export function effectiveVolume(settings, type) {
   const anySolo = SOUND_TYPES.some((t) => settings[t].solo);
   const s = settings[type];
   if (anySolo) return s.solo ? s.volume : 0;
   return s.on ? s.volume : 0;
+}
+
+/** Slider position to gain. Squared, so that the slider feels even to the ear. */
+export function busGain(settings, type) {
+  const v = effectiveVolume(settings, type);
+  return v * v;
 }
 
 /**
@@ -84,6 +112,7 @@ export class SoundBoard {
   constructor() {
     this.ctx = null;
     this.master = null;
+    this.bus = null; // one gain node per sound type: its volume, mute and solo
     this.noise = null;
     this.settings = JSON.parse(JSON.stringify(DEFAULT_SOUND));
     this.pending = [];
@@ -95,29 +124,75 @@ export class SoundBoard {
     this.clock = ''; // which latency source timeFor() last used, for diagnostics
   }
 
-  /** Browsers only start audio after a tap or key press: call this from one. */
+  /**
+   * Browsers only start audio after a tap, click or key press: call this from one. Before the
+   * page has had a real gesture it does nothing (making the audio context then would only earn a
+   * console warning and a context that stays suspended).
+   */
   unlock() {
     try {
+      const activation = typeof navigator !== 'undefined' ? navigator.userActivation : null;
+      if (activation && !activation.hasBeenActive) return false;
       if (!this.ctx) {
         const Ctor = window.AudioContext || window.webkitAudioContext;
         if (!Ctor) return false;
-        this.ctx = new Ctor({ latencyHint: 'interactive' });
-        const comp = this.ctx.createDynamicsCompressor();
-        comp.threshold.value = -14;
-        comp.ratio.value = 6;
-        comp.attack.value = 0.002;
-        comp.release.value = 0.12;
-        this.master = this.ctx.createGain();
-        this.master.gain.value = 0.9;
-        this.master.connect(comp);
-        comp.connect(this.ctx.destination);
-        this.noise = this.makeNoise();
+        this.attach(new Ctor({ latencyHint: 'interactive' }), { compressor: true });
       }
       if (this.ctx.state === 'suspended') this.ctx.resume();
       return true;
     } catch (err) {
       console.warn('Audio is not available:', err);
       return false;
+    }
+  }
+
+  /**
+   * Build the fixed part of the graph on an audio context: one bus per sound type into a master
+   * gain, and (for live playback) a gentle limiter. unlock() calls this; tests pass their own
+   * context.
+   */
+  attach(ctx, options) {
+    this.ctx = ctx;
+    this.master = ctx.createGain();
+    this.master.gain.value = 0.9;
+    if (options && options.compressor) {
+      const comp = ctx.createDynamicsCompressor();
+      comp.threshold.value = -14;
+      comp.ratio.value = 6;
+      comp.attack.value = 0.002;
+      comp.release.value = 0.12;
+      this.master.connect(comp);
+      comp.connect(ctx.destination);
+    } else {
+      this.master.connect(ctx.destination);
+    }
+    this.bus = {};
+    for (const type of SOUND_TYPES) {
+      const g = ctx.createGain();
+      g.gain.value = busGain(this.settings, type);
+      g.connect(this.master);
+      this.bus[type] = g;
+    }
+    this.noise = this.makeNoise();
+    this.pending = [];
+  }
+
+  /**
+   * Call after changing this.settings (volume, mute, solo). Sets the three bus gains; sounds that
+   * are already scheduled follow, because they play through the same bus. Nothing is rescheduled.
+   */
+  applySettings() {
+    if (!this.ctx || !this.bus) return;
+    const now = this.ctx.currentTime;
+    for (const type of SOUND_TYPES) {
+      const gain = this.bus[type].gain;
+      const target = busGain(this.settings, type);
+      if (gain.setTargetAtTime) {
+        if (gain.cancelScheduledValues) gain.cancelScheduledValues(now);
+        gain.setTargetAtTime(target, now, 0.008); // a few milliseconds of glide: no click
+      } else {
+        gain.value = target;
+      }
     }
   }
 
@@ -176,15 +251,16 @@ export class SoundBoard {
 
   /**
    * Schedule one sound. `when` is on the audio clock (seconds); `pan` is -1 (left) to 1 (right);
-   * `height` is the peak height in metres (peak tone only).
+   * `height` is the peak height in metres (peak tone only); `simTime` is the simulation time of
+   * the event, which cancelPending() reports back for sounds it can no longer take back.
+   * Returns true if a sound was scheduled (false when audio is off or this type is silent now).
    */
-  play(type, when, pan, height) {
-    if (!this.running || !Number.isFinite(when)) return;
-    const volume = effectiveVolume(this.settings, type);
-    if (volume <= 0) return;
+  play(type, when, pan, height, simTime) {
+    if (!this.running || !Number.isFinite(when)) return false;
+    if (effectiveVolume(this.settings, type) <= 0) return false;
     const ctx = this.ctx;
     const t = Math.max(when, ctx.currentTime + 0.001);
-    const level = BASE_LEVEL[type] * volume * volume; // squared: a slider that feels even
+    const level = BASE_LEVEL[type]; // the bus applies the volume
 
     const out = ctx.createGain();
     out.gain.value = 1;
@@ -195,7 +271,7 @@ export class SoundBoard {
       out.connect(p);
       tail = p;
     }
-    tail.connect(this.master);
+    tail.connect(this.bus[type]);
 
     const sources = [];
     let end = t + 0.3;
@@ -261,13 +337,15 @@ export class SoundBoard {
     }
 
     this.played[type]++;
-    const entry = { when: t, end, sources, out };
-    this.pending.push(entry);
-    // Forget finished sounds so the list stays short.
+    this.pending.push({ type, when: t, end, sim: Number.isFinite(simTime) ? simTime : -Infinity, sources, out, cancelled: false });
+    // Forget old sounds so the list stays short. A sound is kept for a while after it has ended:
+    // scheduled early by the output latency, its moment in the simulation can still be ahead,
+    // and cancelPending() has to know about it until then.
     if (this.pending.length > 64) {
       const now = ctx.currentTime;
-      this.pending = this.pending.filter((p) => p.end > now);
+      this.pending = this.pending.filter((p) => Math.max(p.end, p.when + KEEP_AFTER_START) > now);
     }
+    return true;
   }
 
   noiseBurst(t, duration) {
@@ -287,20 +365,33 @@ export class SoundBoard {
     return g;
   }
 
-  /** Drop sounds that were scheduled but have not started (pattern or speed just changed). */
+  /**
+   * Drop sounds that were scheduled but have not started (the pattern or the speed just changed).
+   *
+   * Sounds are handed to the audio clock early, by the output latency, so some of them have
+   * already started (or are about to) although their moment in the simulation is still ahead.
+   * Those cannot be taken back. Returns the simulation time of the latest such sound (or
+   * -Infinity): the caller must not schedule anything at or before that time again, or it would
+   * be heard twice.
+   */
   cancelPending() {
-    if (!this.ctx) return;
+    let kept = -Infinity;
+    if (!this.ctx) return kept;
     const now = this.ctx.currentTime;
     for (const p of this.pending) {
-      if (p.when > now + 0.005) {
+      if (p.when > now + CANCEL_MARGIN) {
+        p.cancelled = true;
         try {
           p.out.disconnect();
           for (const s of p.sources) s.stop();
         } catch (err) {
           // already stopped
         }
+      } else if (p.sim > kept) {
+        kept = p.sim; // started (or as good as): it may even have ended, with its moment still ahead
       }
     }
     this.pending = [];
+    return kept;
   }
 }
