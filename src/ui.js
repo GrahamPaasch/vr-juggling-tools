@@ -213,7 +213,7 @@ export class FlatUI {
     if (state.presenting) {
       b.disabled = false;
       b.textContent = 'Exit VR';
-      note.textContent = 'In VR: A or X shows the control board. Point and pull the trigger.';
+      note.textContent = 'In VR: the control board is on your left; A or X brings it in front. Point and pull the trigger.';
     } else if (state.supported) {
       b.disabled = false;
       b.textContent = 'Enter VR';

@@ -146,7 +146,7 @@ function start() {
       if (state.vr.calibrating) {
         state.vr.calibrating = false;
         xr.prompt('', 0);
-        xr.summonPanel();
+        xr.summonPanel('front');
       } else {
         xr.togglePanel();
       }
@@ -361,8 +361,8 @@ function placeInVR(sample) {
   }
   applyAnchor(false);
   if (fits) {
-    xr.summonPanel();
-    xr.prompt('A or X shows or hides the controls', 5);
+    xr.summonPanel('side');
+    xr.prompt('Controls: on your left,\nor press A or X to bring them in front', 6);
   } else {
     beginCalibration();
   }
@@ -370,7 +370,7 @@ function placeInVR(sample) {
 
 function beginCalibration() {
   state.vr.calibrating = true;
-  xr.panel.group.visible = false;
+  xr.hidePanel();
   xr.prompt('Hold both controllers where you catch,\nthen pull a trigger   (A or X skips)', 0);
 }
 
@@ -407,8 +407,11 @@ function calibrate(sample) {
   state.vr.calibrating = false;
   applyAnchor(false);
   save();
-  xr.prompt('Calibrated: hands ' + a.handHeight.toFixed(2) + ' m high, ' + a.distance.toFixed(2) + ' m out', 3.5);
-  xr.summonPanel();
+  xr.prompt(
+    'Calibrated: hands ' + a.handHeight.toFixed(2) + ' m high, ' + a.distance.toFixed(2) + ' m out.\nControls: on your left, or press A or X',
+    6
+  );
+  xr.summonPanel('side');
   return true;
 }
 

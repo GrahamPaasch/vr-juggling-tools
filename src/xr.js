@@ -25,6 +25,7 @@ const BUTTON_AX = 4; // xr-standard gamepad: A on the right controller, X on the
 const BUTTON_BY = 5;
 
 const JOINT_FOR_PALM = 'middle-finger-metacarpal';
+const UP = new THREE.Vector3(0, 1, 0);
 
 export class XRControl {
   /**
@@ -55,10 +56,10 @@ export class XRControl {
     this.speedLabel.mesh.visible = false;
     this.promptLabel = new TextLabel({
       pxWidth: 1024,
-      pxHeight: 224,
-      height: 0.14,
+      pxHeight: 256,
+      height: 0.18,
       depthTest: false,
-      font: '600 54px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+      font: '600 58px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
     });
     this.promptLabel.mesh.position.set(0, -0.1, -1.1);
     this.promptLabel.mesh.visible = false;
@@ -143,7 +144,7 @@ export class XRControl {
   onSessionEnd() {
     this.presenting = false;
     this.session = null;
-    this.panel.group.visible = false;
+    this.hidePanel();
     this.speedLabel.mesh.visible = false;
     this.promptLabel.mesh.visible = false;
     this.stage.renderer.xr.cameraAutoUpdate = true;
@@ -263,10 +264,15 @@ export class XRControl {
     }
   }
 
-  /** Show a head-locked message for `seconds` (0 = until replaced). */
+  /**
+   * Show a head-locked message. With `seconds` it is a passing notice, kept low in the view so it
+   * does not cover the pattern. Without, it is an instruction that stays near the centre until
+   * replaced (the calibration prompt).
+   */
   prompt(text, seconds) {
     this.promptLabel.setText(text);
     this.promptLabel.mesh.visible = this.presenting && text !== '';
+    this.promptLabel.mesh.position.y = seconds ? -0.5 : -0.1;
     this.promptUntil = seconds ? performance.now() + seconds * 1000 : 0;
   }
 
@@ -276,11 +282,16 @@ export class XRControl {
     this.speedLabel.mesh.visible = this.presenting && text !== '';
   }
 
-  /** Put the control board in front of the person, a little to the left and below eye level. */
-  summonPanel() {
+  /**
+   * Place the control board relative to where the person is and which way they face.
+   *   'side'   well to the left, out of the way of the pattern (which fills the view ahead);
+   *   'front'  straight ahead, a little below eye level, for when you want to use it.
+   */
+  summonPanel(where) {
     const head = this.headPosition(this.tmpA);
     const yaw = this.headYaw();
-    const offset = this.tmpB.set(-0.45, -0.2, -1.15).applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw);
+    const offset = where === 'front' ? this.tmpB.set(0, -0.25, -1.15) : this.tmpB.set(-1.06, -0.15, -0.28);
+    offset.applyAxisAngle(UP, yaw);
     this.panel.group.position.copy(head).add(offset);
     this.panel.group.position.y = Math.max(this.panel.group.position.y, 0.45);
     this.panel.group.lookAt(head);
@@ -288,16 +299,29 @@ export class XRControl {
     this.panel.group.updateMatrixWorld(true);
   }
 
+  hidePanel() {
+    this.panel.group.visible = false;
+    this.controllers.forEach((c) => {
+      c.line.visible = false;
+      this.panel.clearPointer(c.index);
+    });
+  }
+
+  /** Is the board roughly where the person is looking (within 35 degrees to either side)? */
+  panelInView() {
+    if (!this.panel.group.visible) return false;
+    const head = this.headPosition(this.tmpA);
+    const to = this.tmpB.copy(this.panel.group.position).sub(head);
+    const bearing = Math.atan2(-to.x, -to.z);
+    let off = bearing - this.headYaw();
+    off = Math.atan2(Math.sin(off), Math.cos(off));
+    return Math.abs(off) < (35 * Math.PI) / 180;
+  }
+
+  /** A or X: hide the board if you are looking at it, otherwise bring it in front of you. */
   togglePanel() {
-    if (this.panel.group.visible) {
-      this.panel.group.visible = false;
-      this.controllers.forEach((c) => {
-        c.line.visible = false;
-        this.panel.clearPointer(c.index);
-      });
-    } else {
-      this.summonPanel();
-    }
+    if (this.panelInView()) this.hidePanel();
+    else this.summonPanel('front');
   }
 
   /**

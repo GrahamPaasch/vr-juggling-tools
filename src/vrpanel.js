@@ -298,7 +298,7 @@ export class VRPanel {
     ]);
     y += H + G;
 
-    this.text(ctx, 'A or X: show or hide this board.  Left stick: move.  Right stick: turn.', CW / 2, y + 26, {
+    this.text(ctx, 'A or X: bring this board in front of you, or hide it.  Left stick: move.  Right stick: turn.', CW / 2, y + 26, {
       size: 23,
       color: C.mute,
       align: 'center',

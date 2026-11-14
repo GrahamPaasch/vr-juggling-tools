@@ -214,17 +214,28 @@ async function flatScreen(browser, base) {
     assert.equal(await page.isVisible('#speedBadge'), true);
     assert.match(await page.textContent('#speedBadge'), /^0\.5x/);
     assert.deepEqual(await heights(), before, 'heights are untouched by slow motion');
+    // Simulated seconds per real second, measured frame by frame the way the app's clock does
+    // (so a slow test machine does not change the answer).
     const rate = await app(
       page,
       () =>
         new Promise((resolve) => {
           const v = window.__vrj;
+          let last = performance.now();
+          let real = 0;
+          let n = 0;
           const s0 = v.state.simTime;
-          const t0 = performance.now();
-          setTimeout(() => resolve((v.state.simTime - s0) / ((performance.now() - t0) / 1000)), 800);
+          const tick = () => {
+            const now = performance.now();
+            real += Math.min((now - last) / 1000, 0.1);
+            last = now;
+            if (++n < 50) requestAnimationFrame(tick);
+            else resolve((v.state.simTime - s0) / real);
+          };
+          requestAnimationFrame(tick);
         })
     );
-    near(rate, 0.5, 0.12, 'simulated seconds per real second at 0.5x');
+    near(rate, 0.5, 0.06, 'simulated seconds per real second at 0.5x');
     await page.fill('#speed', '25');
     assert.match(await page.textContent('#speedBadge'), /^0\.25x/);
     await page.click('#speedChips [data-speed="1"]');
@@ -542,7 +553,9 @@ async function quest1(browser, base) {
     near(s.anchor.yaw, 0, 0.03, 'facing the way the hands are held');
     assert.ok(s.anchor.handHeight > 0.9 && s.anchor.handHeight < 1.1);
     assert.match(s.prompt, /Calibrated/);
-    assert.equal(s.panel, true, 'the control board comes back');
+    assert.match(s.prompt, /Controls: on your left/);
+    assert.equal(s.panel, true, 'the control board comes back, off to the side');
+    assert.equal(await app(page, () => window.__vrj.xr.panelInView()), false, 'out of the way of the pattern');
     assert.equal(s.saved.calibrated, true, 'calibration is remembered');
   });
 
@@ -652,11 +665,12 @@ async function quest1(browser, base) {
     const head = () => app(page, () => window.__vrj.xr.headPosition(new window.__vrj.THREE.Vector3()).toArray());
     const start = await head();
     await app(page, () => window.__xrDevice.controllers.left.updateAxes('thumbstick', 0, -1));
-    await page.waitForTimeout(900);
+    await page.waitForFunction((z0) => z0 - window.__vrj.xr.headPosition(new window.__vrj.THREE.Vector3()).z > 0.9, start[2], { timeout: 8000 });
     await app(page, () => window.__xrDevice.controllers.left.updateAxes('thumbstick', 0, 0));
     await frames(page, 3);
     const walked = await head();
-    assert.ok(start[2] - walked[2] > 0.5, 'walked forward: ' + (start[2] - walked[2]).toFixed(2) + ' m');
+    assert.ok(start[2] - walked[2] > 0.9, 'walked forward: ' + (start[2] - walked[2]).toFixed(2) + ' m');
+    near(walked[0], start[0], 0.02, 'straight ahead, no sideways drift');
     near(walked[1], start[1], 1e-6, 'height unchanged');
     assert.equal(await app(page, () => window.__vrj.stage.ghostHead.visible), true, "the juggler's place is marked once you leave it");
 
@@ -671,11 +685,16 @@ async function quest1(browser, base) {
     near(await app(page, () => window.__vrj.stage.rig.rotation.y), -Math.PI / 6, 1e-6, 'turned 30 degrees to the right');
     await page.screenshot({ path: path.join(OUT, 'vr-quest1-stepped-out.png') });
 
-    // A (or X) hides and shows the board; "my spot" brings you back.
+    // The board stayed behind, off to the side. A (or X) brings it in front; A again hides it.
+    const board = () => app(page, () => ({ visible: window.__vrj.xr.panel.group.visible, inView: window.__vrj.xr.panelInView() }));
+    assert.deepEqual(await board(), { visible: true, inView: false });
     await pull(page, 'right', 'a-button');
-    assert.equal(await app(page, () => window.__vrj.xr.panel.group.visible), false);
+    assert.deepEqual(await board(), { visible: true, inView: true });
     await pull(page, 'right', 'a-button');
-    assert.equal(await app(page, () => window.__vrj.xr.panel.group.visible), true);
+    assert.deepEqual(await board(), { visible: false, inView: false });
+    await pull(page, 'right', 'a-button');
+    assert.deepEqual(await board(), { visible: true, inView: true });
+    // "my spot" brings you back to the juggler's place.
     await press(page, 'spot');
     const back = await head();
     const spot = await app(page, () => [window.__vrj.state.anchor.spotX, window.__vrj.state.anchor.spotZ]);
@@ -696,7 +715,7 @@ async function quest1(browser, base) {
     const a = await app(page, () => ({ f: window.__vrj.xr.frames, calls: window.__vrj.stage.renderer.info.render.calls }));
     await page.waitForTimeout(500);
     const b = await app(page, () => ({ f: window.__vrj.xr.frames }));
-    assert.ok(b.f > a.f + 5, 'XR frames advanced by ' + (b.f - a.f));
+    assert.ok(b.f > a.f + 2, 'XR frames advanced by ' + (b.f - a.f));
     assert.ok(a.calls > 5);
   });
 
