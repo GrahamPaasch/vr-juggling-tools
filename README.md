@@ -48,6 +48,9 @@ npm test                      # unit tests (node --test), no dependencies
 npm install && npm run smoke  # headless Chromium, flat screen and an emulated Quest 1
 ```
 
+The smoke test uses Playwright's Chromium if it is installed (`npx playwright install chromium`)
+and otherwise the Google Chrome on the machine.
+
 WebXR only works on https or on localhost. To try a local copy in the headset before it is
 deployed, connect it by USB and run `adb reverse tcp:8080 tcp:8080`, then open
 `http://localhost:8080` in the headset browser. A plain `http://192.168...` link will not offer VR.
@@ -214,6 +217,12 @@ Not done in version 1, and worth knowing:
   starts, that the palm cup opens out of your palm, and that the control board is comfortable.
 - The pattern is planar and sits about a forearm in front of your eyes, as in real juggling.
   Balls passing that close can be hard on the eyes in a headset; stepping back helps.
+- The keypad on the VR board has the digits 0 to 9. Throws of 10 and up (letters) can only be
+  typed on the page.
+- The hand-tracking toggle is on the page, under Calibration, and has to be set before entering
+  VR (the browser grants it when the session starts).
+- Your own controllers are drawn as a simple handle and a palm cup, not as a model of the
+  controller: nothing is downloaded at run time.
 
 ## Files
 
