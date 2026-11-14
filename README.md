@@ -252,7 +252,7 @@ materials, a few dozen draw calls, plain ES modules with no build step.
   clock that keeps the rhythm even);
 - 500 random valid siteswaps and 2000 random strings: nothing breaks, nothing is silently wrong.
 
-`npm run smoke` drives the real page in headless Chromium: 40 checks on a laptop-sized screen, a
+`npm run smoke` drives the real page in headless Chromium: 41 checks on a laptop-sized screen, a
 phone-sized screen, the live site's `/juggling/vr` path, and inside an emulated Oculus Quest 1
 using Meta's [Immersive Web Emulation Runtime](https://github.com/meta-quest/immersive-web-emulation-runtime)
 (trigger calibration, pointing at the board, keypad entry, slow-motion label, palm nudge,

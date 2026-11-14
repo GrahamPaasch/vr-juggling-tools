@@ -376,7 +376,15 @@ export class XRControl {
     const head = this.headPosition(this.tmpA);
     rig.position.x += x - head.x;
     rig.position.z += z - head.z;
-    rig.updateMatrixWorld(true);
+    this.syncCamera();
+  }
+
+  /**
+   * Bring the camera up to date with the headset for this frame. three.js would do this while
+   * drawing; doing it first means everything that reads the head pose this frame is current.
+   */
+  syncCamera() {
+    this.stage.rig.updateMatrixWorld(true);
     this.stage.renderer.xr.updateCamera(this.stage.camera);
   }
 
@@ -428,8 +436,7 @@ export class XRControl {
       }
     }
 
-    rig.updateMatrixWorld(true);
-    stage.renderer.xr.updateCamera(stage.camera);
+    this.syncCamera();
 
     if (!this.placed && this.frames >= 2) {
       this.placed = true;

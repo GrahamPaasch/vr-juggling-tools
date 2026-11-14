@@ -61,6 +61,7 @@ let ui;
 
 let audioWasRunning = false;
 let soundFailed = false;
+let vrFailed = false;
 
 const tmpWorld = new THREE.Vector3();
 const tmpCam = new THREE.Vector3();
@@ -216,12 +217,19 @@ function start() {
 
 function frame(dt, now, lead) {
   if (xr.presenting) {
-    xr.update(dt);
-    // Show the faint head at the juggler's spot once the person has stepped away from it.
-    const head = xr.headPosition(tmpCam);
-    stage.ghostHead.visible = Math.hypot(head.x - state.anchor.spotX, head.z - state.anchor.spotZ) > 0.6;
-    if (state.vrMessage && performance.now() > state.vrMessageUntil) state.vrMessage = '';
-    xr.panel.setModel(panelModel());
+    try {
+      xr.update(dt);
+      // Show the faint head at the juggler's spot once the person has stepped away from it.
+      const head = xr.headPosition(tmpCam);
+      stage.ghostHead.visible = Math.hypot(head.x - state.anchor.spotX, head.z - state.anchor.spotZ) > 0.6;
+      if (state.vrMessage && performance.now() > state.vrMessageUntil) state.vrMessage = '';
+      xr.panel.setModel(panelModel());
+    } catch (err) {
+      // Whatever went wrong, the view must keep following the head.
+      if (!vrFailed) console.error('VR update failed; head tracking continues.', err);
+      vrFailed = true;
+      xr.syncCamera();
+    }
   } else {
     view.apply();
   }

@@ -834,6 +834,36 @@ async function quest1(browser, base) {
     assert.ok(a.calls > 5);
   });
 
+  await check('if something in VR breaks, the view still follows the head', async () => {
+    const head = () => app(page, () => window.__vrj.xr.headPosition(new window.__vrj.THREE.Vector3()).toArray());
+    const device = () => app(page, () => [window.__xrDevice.position.x, window.__xrDevice.position.y, window.__xrDevice.position.z]);
+    const h0 = await head();
+    const d0 = await device();
+    await app(page, () => {
+      const v = window.__vrj;
+      v.keepSetModel = v.xr.panel.setModel;
+      v.xr.panel.setModel = () => {
+        throw new Error('smoke test: the board failed');
+      };
+      window.__xrDevice.position.set(window.__xrDevice.position.x + 0.2, window.__xrDevice.position.y - 0.1, window.__xrDevice.position.z);
+    });
+    await frames(page, 5);
+    const h1 = await head();
+    const d1 = await device();
+    near(h1[1] - h0[1], d1[1] - d0[1], 1e-3, 'the head height follows the headset');
+    near(Math.hypot(h1[0] - h0[0], h1[2] - h0[2]), 0.2, 1e-3, 'the head position follows the headset');
+    await app(page, () => {
+      const v = window.__vrj;
+      v.xr.panel.setModel = v.keepSetModel;
+      window.__xrDevice.position.set(window.__xrDevice.position.x - 0.2, window.__xrDevice.position.y + 0.1, window.__xrDevice.position.z);
+    });
+    await frames(page, 3);
+    // It is reported once, not once per frame.
+    const reports = problems.filter((p) => /VR update failed/.test(p));
+    assert.equal(reports.length, 1);
+    problems.splice(0, problems.length, ...problems.filter((p) => !/VR update failed|smoke test: the board failed/.test(p)));
+  });
+
   await check('Exit VR returns to the flat page with everything still running', async () => {
     await press(page, 'exit');
     await page.waitForFunction(() => !window.__vrj.state.vr.presenting, null, { timeout: 5000 });
