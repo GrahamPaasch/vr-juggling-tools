@@ -1,0 +1,18 @@
+{
+  "name": "vr-juggling-tools",
+  "version": "0.1.0",
+  "description": "See the ideal juggling pattern in VR: Kalvan's optimal-juggling math as a WebXR page.",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "serve": "node tools/serve.mjs",
+    "smoke": "node tools/smoke.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "1.56.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
