@@ -369,6 +369,41 @@ test('height for each throw value: H = g f^2 / 8 with real gravity', () => {
   assert.ok(p.heightByValue[5] > p.heightByValue[3] && p.heightByValue[3] > p.heightByValue[1]);
 });
 
+test('heights of mixed throws follow the book: H1 / H2 = ((n1 - 2r) / (n2 - 2r))^2', () => {
+  // "When Balls Collide", p. 129: in 5 3 "the high throws are not 5/3 as high as the low throws,
+  // but actually between four and five times as high"; "9's are almost twice as high as 7's".
+  const ratio = (text, hi, lo) => {
+    const p = buildPattern(text);
+    return p.heightByValue[hi] / p.heightByValue[lo];
+  };
+  near(ratio('53', 5, 3), ((5 - 1.4) / (3 - 1.4)) ** 2, 1e-12);
+  assert.ok(ratio('53', 5, 3) > 4 && ratio('53', 5, 3) < 5.1, 'four to five times: ' + ratio('53', 5, 3).toFixed(2));
+  near(ratio('97531', 9, 7), ((9 - 1.4) / (7 - 1.4)) ** 2, 1e-12);
+  assert.ok(ratio('97531', 9, 7) > 1.7 && ratio('97531', 9, 7) < 2, 'almost twice: ' + ratio('97531', 9, 7).toFixed(2));
+  // The ratio does not depend on the tempo, only on the dwell ratio.
+  near(ratio('53', 5, 3), ratio('753', 5, 3), 1e-12);
+});
+
+test('the highest throw of a mixed pattern is exactly that cascade or fountain throw', () => {
+  // "When Balls Collide", p. 130: "7 1 is a four ball shower, but one hand does all the work
+  // of a seven ball cascade."
+  for (const [mixed, top] of [['71', 7], ['7131', 7], ['531', 5], ['51', 5], ['441', 4], ['423', 4], ['66661', 6], ['97531', 9]]) {
+    const p = buildPattern(mixed);
+    const u = buildPattern(top.toString(36));
+    assert.equal(p.T, u.T, mixed + ' runs at the tempo of ' + top);
+    near(p.flightByValue[top], u.flightByValue[top], 1e-12, mixed + ' flight of the ' + top);
+    near(p.heightByValue[top], u.heightByValue[top], 1e-12, mixed + ' height of the ' + top);
+    assert.deepEqual(p.layout, u.layout, mixed + ' uses the same throw and catch points');
+    // Same throw, same path: launch point, landing point and launch speed all agree.
+    let rec = null;
+    for (let i = 0; i < p.cycleBeats && !rec; i++) if (throwAtBeat(p, i).value === top && throwAtBeat(p, i).hand === 0) rec = throwAtBeat(p, i);
+    const ref = throwAtBeat(u, 0);
+    near(rec.x0, ref.x0, 1e-12);
+    near(rec.x1, ref.x1, 1e-12);
+    near(rec.vy, ref.vy, 1e-12);
+  }
+});
+
 test('every thrown ball really flies that long and that high (trajectory check)', () => {
   for (const text of ['3', '7', '531', '441', '456', '97531']) {
     const pattern = buildPattern(text);

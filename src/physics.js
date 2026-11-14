@@ -170,6 +170,7 @@ export function ballsInFlightPerHand(balls, dwellRatio, hands) {
  *     f(v) = v B - d = (v - 2r) B          for v >= 3      [S], [K96]
  *
  * For a uniform pattern (every throw v = b) this is f = (b/2 - r) T = W T: Shannon's theorem.
+ * Heights therefore go as (v - 2r)^2, the ratio [KL18] gives for siteswap throws (p. 129).
  *
  * Conventions for the short throws (labelled assumptions, see README "Assumptions"):
  *   v = 0  an empty beat: no ball, no flight.
@@ -398,9 +399,10 @@ function publishedRow(b, r) {
  *
  * Any other siteswap gets exact timing and heights on a "standard layout" (assumption A4): the
  * tempo and the throw and catch points of the uniform pattern whose throw equals this pattern's
- * highest throw, so its highest throw is exactly that cascade or fountain throw. Kalvan's spatial
- * optimum is not derived for mixed patterns, so `spatial` is null and findCollisions() reports
- * honestly whether balls would hit each other.
+ * highest throw, so its highest throw is exactly that cascade or fountain throw ([KL18] p. 130:
+ * "7 1 is a four ball shower, but one hand does all the work of a seven ball cascade"). Kalvan's
+ * spatial optimum is not derived for mixed patterns, so `spatial` is null and findCollisions()
+ * reports honestly whether balls would hit each other.
  *
  * Returns { ok: false, code, error } for an invalid siteswap.
  */

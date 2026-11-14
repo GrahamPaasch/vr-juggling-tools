@@ -90,7 +90,9 @@ time before that. With beat time `B` (two hands alternate, so `T = 2B`) and dwel
 
 For a uniform pattern, `v = n`, this is exactly Shannon's `f = (n/2 - r) T`. `H = g f²/8` is
 [K96]: a ball thrown and caught at the same height rises for `f/2`. Doubling the flight time
-quadruples the height.
+quadruples the height. It follows that two throws in one pattern have heights in the ratio
+`((n1 - 2r) / (n2 - 2r))²`, which is the formula [KL18] gives for siteswap throws (p. 129): in
+`53` the 5 is about five times as high as the 3, not 5/3 as high.
 
 Slow motion multiplies the clock that reads these formulas. `g`, `f` and `H` never change.
 
@@ -187,7 +189,7 @@ Assumptions, each labelled in the code with the same tag:
 | A1 | A `1` flies for `(1 - r) B` and is held `r B`; it is handed from one hand's inside (throw) point to the other's. | A full dwell `2rB` is longer than the one beat a 1 has. The same ratio is applied to that one beat, so no new constant is needed. With r = 0.7 this is 0.3 of a beat. Jugglers bring the hands together for a 1. |
 | A2 | A `2` is a hold and a `0` is an empty hand. | Standard siteswap convention. |
 | A3 | Fountain: the two inside throw points are one `D1` apart, `P = F + D1`, so the pattern is `2F + D1` wide. | The hands juggle independently, so the collision math does not fix the gap between them. [K96]: "approximately the width of the shoulders". [KL18]: shoulder width is comfortable, and jugglers do not reach across the centre line, so the pattern is wider than `2F`. This choice keeps the same clearance between the hands as on the arc. It gives P = 0.44 m for 4 balls and 0.53 m for 6. |
-| A4 | A mixed siteswap uses the tempo and the throw and catch points of the uniform pattern of its highest throw, so that throw is exactly the cascade or fountain throw. | The spatial optimum is not derived for mixed patterns. [K96] notes that the high throw of a b-ball shower is "about the same as in a cascade with (2b - 1) balls". |
+| A4 | A mixed siteswap uses the tempo and the throw and catch points of the uniform pattern of its highest throw, so that throw is exactly the cascade or fountain throw. | The spatial optimum is not derived for mixed patterns. [K96]: the high throw of a b-ball shower is "about the same as in a cascade with (2b - 1) balls". [KL18] p. 130: "7 1 is a four ball shower, but one hand does all the work of a seven ball cascade", and such patterns are recommended practice for the target number. So `71` and `7131` here show true 7-ball cascade throws. |
 | A5 | Ghost hand path between catch and release: a cubic Hermite curve in time, with the hand still at the instant of the catch. A hold waits at the catch point and scoops one normal dwell before the release. | [K96]: "the exact path is unspecified". Only the catch and throw points are part of the optimum. The scoop depth that results (12 cm for 3 balls, 25 cm for 7) is a drawing choice. |
 | A6 | Balls are thrown and caught at the same height. | The simplification used by [KL18] and by the `H` in juggling_coach. [K96] derives a small tilt (catch slightly above throw); it is not used. |
 | A7 | Dwell ratio `r = 0.7` for every pattern. | It is what the [KL18] table uses (W = b/2 - 0.7). [K96] reports "near 2/3" and measures 0.63 to 0.71. |
@@ -255,7 +257,7 @@ materials, a few dozen draw calls, plain ES modules with no build step.
 
 ## Tests
 
-`npm test` runs 63 unit tests with `node --test`:
+`npm test` runs 65 unit tests with `node --test`:
 
 - siteswap validation, including clear refusals of synchronous and multiplex input;
 - Shannon's theorem, measured from the generated throws, for 3 to 13 balls;
