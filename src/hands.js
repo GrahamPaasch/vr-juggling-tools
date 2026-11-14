@@ -73,13 +73,16 @@ export function buildHandTimeline(pattern) {
 /**
  * Position and velocity of one hand at time t: { x, y, vx, vy, carrying }.
  * `carrying` is true between a catch and the following release.
+ * Pass an object as `out` to have it filled in and returned (the draw loop does, to make no
+ * garbage); without it a fresh object is returned.
  */
-export function handState(timeline, hand, t) {
+export function handState(timeline, hand, t, out) {
+  const o = out || { x: 0, y: 0, vx: 0, vy: 0, carrying: false };
   const knots = timeline.knots[hand];
   if (knots.length === 0) {
     // This hand never throws or catches (it holds a ball as a 2 forever, or is always empty).
     const rest = timeline.rest[hand];
-    return { x: rest.x, y: rest.y, vx: 0, vy: 0, carrying: false };
+    return put(o, rest.x, rest.y, 0, 0, false);
   }
   const tt = mod(t, timeline.cycleTime);
 
@@ -94,28 +97,37 @@ export function handState(timeline, hand, t) {
   const a = knots[lo];
   const b = knots[Math.min(lo + 1, knots.length - 1)];
   const span = b.t - a.t;
-  if (span <= EPS) return { x: a.x, y: a.y, vx: a.vx, vy: a.vy, carrying: a.type === 'catch' };
+  if (span <= EPS) return put(o, a.x, a.y, a.vx, a.vy, a.type === 'catch');
 
   if (a.type === 'catch') {
     // Carrying a ball from the catch to the release.
     const scoop = Math.min(span, timeline.dwell);
     const start = b.t - scoop;
-    if (tt <= start) return { x: a.x, y: a.y, vx: 0, vy: 0, carrying: true };
-    const s = hermite(a.x, a.y, 0, 0, b.x, b.y, b.vx, b.vy, scoop, tt - start);
-    s.carrying = true;
-    return s;
+    if (tt <= start) return put(o, a.x, a.y, 0, 0, true);
+    hermite(o, a.x, a.y, 0, 0, b.x, b.y, b.vx, b.vy, scoop, tt - start);
+    o.carrying = true;
+    return o;
   }
 
   // Empty: from the release to the next catch.
   const travel = Math.min(span, timeline.empty);
-  if (tt >= a.t + travel) return { x: b.x, y: b.y, vx: 0, vy: 0, carrying: false };
-  const s = hermite(a.x, a.y, a.vx, a.vy, b.x, b.y, 0, 0, travel, tt - a.t);
-  s.carrying = false;
-  return s;
+  if (tt >= a.t + travel) return put(o, b.x, b.y, 0, 0, false);
+  hermite(o, a.x, a.y, a.vx, a.vy, b.x, b.y, 0, 0, travel, tt - a.t);
+  o.carrying = false;
+  return o;
+}
+
+function put(o, x, y, vx, vy, carrying) {
+  o.x = x;
+  o.y = y;
+  o.vx = vx;
+  o.vy = vy;
+  o.carrying = carrying;
+  return o;
 }
 
 /** Cubic Hermite interpolation in time: matches position and velocity at both ends. */
-function hermite(x0, y0, vx0, vy0, x1, y1, vx1, vy1, duration, elapsed) {
+function hermite(o, x0, y0, vx0, vy0, x1, y1, vx1, vy1, duration, elapsed) {
   const s = Math.min(Math.max(elapsed / duration, 0), 1);
   const s2 = s * s;
   const s3 = s2 * s;
@@ -128,33 +140,50 @@ function hermite(x0, y0, vx0, vy0, x1, y1, vx1, vy1, duration, elapsed) {
   const d10 = 3 * s2 - 4 * s + 1;
   const d01 = -6 * s2 + 6 * s;
   const d11 = 3 * s2 - 2 * s;
-  return {
-    x: h00 * x0 + h10 * duration * vx0 + h01 * x1 + h11 * duration * vx1,
-    y: h00 * y0 + h10 * duration * vy0 + h01 * y1 + h11 * duration * vy1,
-    vx: (d00 * x0 + d01 * x1) / duration + d10 * vx0 + d11 * vx1,
-    vy: (d00 * y0 + d01 * y1) / duration + d10 * vy0 + d11 * vy1,
-  };
+  o.x = h00 * x0 + h10 * duration * vx0 + h01 * x1 + h11 * duration * vx1;
+  o.y = h00 * y0 + h10 * duration * vy0 + h01 * y1 + h11 * duration * vy1;
+  o.vx = (d00 * x0 + d01 * x1) / duration + d10 * vx0 + d11 * vx1;
+  o.vy = (d00 * y0 + d01 * y1) / duration + d10 * vy0 + d11 * vy1;
+  return o;
 }
 
 /**
  * Everything to draw at time t:
  *   hands: [right, left], each { x, y, vx, vy, carrying, holding } (holding = ball id or -1)
  *   balls: one per ball, { ball, air, x, y, hand, value } with `hand` = -1 while in the air
+ * Pass the result of the previous call as `scratch` to have its objects reused.
  */
-export function sceneAt(pattern, timeline, t) {
-  const hands = [handState(timeline, RIGHT, t), handState(timeline, LEFT, t)];
+export function sceneAt(pattern, timeline, t, scratch) {
+  const scene = scratch || { hands: [null, null], balls: [], states: [] };
+  const hands = scene.hands;
+  hands[RIGHT] = handState(timeline, RIGHT, t, hands[RIGHT] || undefined);
+  hands[LEFT] = handState(timeline, LEFT, t, hands[LEFT] || undefined);
   hands[RIGHT].holding = -1;
   hands[LEFT].holding = -1;
-  const balls = ballStates(pattern, t).map((b) => {
+  const states = ballStates(pattern, t, scene.states);
+  const balls = scene.balls;
+  for (let i = 0; i < states.length; i++) {
+    const b = states[i];
+    let e = balls[i];
+    if (e === undefined) e = balls[i] = { ball: 0, air: false, x: 0, y: 0, hand: -1, value: 0 };
+    e.ball = b.ball;
+    e.air = b.air;
+    e.value = b.throw.value;
     if (b.air) {
-      return { ball: b.ball, air: true, x: b.x, y: b.y, hand: -1, value: b.throw.value };
+      e.x = b.x;
+      e.y = b.y;
+      e.hand = -1;
+    } else {
+      const h = hands[b.hand];
+      h.holding = b.ball;
+      h.carrying = true; // also covers a hand that holds a 2 forever and so has no knots
+      e.x = h.x;
+      e.y = h.y;
+      e.hand = b.hand;
     }
-    const h = hands[b.hand];
-    h.holding = b.ball;
-    h.carrying = true; // also covers a hand that holds a 2 forever and so has no knots
-    return { ball: b.ball, air: false, x: h.x, y: h.y, hand: b.hand, value: b.throw.value };
-  });
-  return { hands, balls };
+  }
+  balls.length = states.length;
+  return scene;
 }
 
 /**

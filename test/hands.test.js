@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { RIGHT, LEFT, buildPattern, throwAtBeat } from '../src/physics.js';
+import { RIGHT, LEFT, buildPattern, throwAtBeat, findCollisions } from '../src/physics.js';
 import { buildHandTimeline, handState, handPath, sceneAt } from '../src/hands.js';
 
 const near = (actual, expected, tolerance, label) =>
@@ -212,4 +212,114 @@ test('scoop depth is modest and grows with the throw (sanity of the drawing choi
   assert.ok(d3 > 0.05 && d3 < 0.2, '3 balls: ' + d3);
   assert.ok(d7 > d5 && d5 > d3);
   assert.ok(d7 < 0.4, '7 balls: ' + d7);
+});
+
+/**
+ * How far a carrying hand strays outside the stretch between where it caught and where it will
+ * release, per carry: [{ catchValue, throwValue, outward, inward }] (metres, on the hand's own side).
+ */
+function carryExcursions(text) {
+  const { pattern, timeline } = setup(text);
+  const out = [];
+  for (const hand of [RIGHT, LEFT]) {
+    const side = hand === RIGHT ? 1 : -1;
+    const knots = timeline.knots[hand];
+    for (let k = 0; k + 1 < knots.length; k++) {
+      const a = knots[k];
+      const b = knots[k + 1];
+      if (a.type !== 'catch' || b.type !== 'throw' || a.t < 0 || a.t >= pattern.cycleTime) continue;
+      const lo = Math.min(a.x * side, b.x * side);
+      const hi = Math.max(a.x * side, b.x * side);
+      let outward = 0;
+      let inward = 0;
+      for (let j = 0; j <= 400; j++) {
+        const x = handState(timeline, hand, a.t + ((b.t - a.t) * j) / 400).x * side;
+        outward = Math.max(outward, x - hi);
+        inward = Math.max(inward, lo - x);
+      }
+      out.push({ catchValue: a.value, throwValue: b.value, outward, inward });
+    }
+  }
+  return out;
+}
+
+test('a hand about to hand a ball across carries it straight in: no swing outward past the catch point', () => {
+  // With the 1 thrown between the two inside throw points (38.7 cm apart on the 7-ball layout)
+  // the release was a 6 m/s sideways flick, and the hand wound up 9.5 cm outward for it in 71,
+  // 19 cm in 97531 and 26 cm in b1. A hand-across of one ball width needs no wind-up.
+  for (const text of ['71', '7131', '7531', '97531', 'b1', 'd1', '531', '441', '51', '31']) {
+    const carries = carryExcursions(text).filter((c) => c.throwValue === 1 && c.catchValue !== 1);
+    assert.ok(carries.length > 0, text + ' has a hand that catches a throw and hands it across');
+    for (const c of carries) {
+      assert.ok(c.outward < 1e-6, text + ': carrying a ' + c.catchValue + ' to a 1 goes ' + (c.outward * 100).toFixed(1) + ' cm outward past its catch point');
+      assert.ok(c.inward < 0.01, text + ': and does not overshoot the pass point (' + (c.inward * 100).toFixed(1) + ' cm)');
+    }
+  }
+  // No carry in the presets and the spec's examples strays more than a small wind-up.
+  for (const text of PATTERNS) {
+    for (const c of carryExcursions(text)) {
+      assert.ok(c.outward < 0.025 && c.inward < 0.025, text + ': a carry strays ' + (Math.max(c.outward, c.inward) * 100).toFixed(1) + ' cm outside its stretch');
+    }
+  }
+});
+
+test('the receiving hand is at the pass point, empty, when a 1 arrives; neither hand crosses the centre line', () => {
+  for (const text of ['531', '441', '51', '71', '7131', '312', '1']) {
+    const { pattern, timeline } = setup(text);
+    for (let i = 0; i < pattern.cycleBeats; i++) {
+      const rec = throwAtBeat(pattern, i);
+      if (rec.value !== 1) continue;
+      const giver = handState(timeline, rec.hand, rec.tThrow);
+      const taker = handState(timeline, rec.toHand, rec.tCatch);
+      near(Math.abs(giver.x), pattern.layout.xP, 1e-9, text + ': the giving hand is at its pass point');
+      near(Math.abs(taker.x), pattern.layout.xP, 1e-9, text + ': the taking hand is at its pass point');
+      assert.ok(giver.x * taker.x < 0, text + ': on opposite sides of the centre line');
+      assert.equal(handState(timeline, rec.toHand, rec.tCatch - 1e-6).carrying, false, text + ': the taking hand is empty');
+    }
+    for (const hand of [RIGHT, LEFT]) {
+      const side = hand === RIGHT ? 1 : -1;
+      for (const p of handPath(timeline, hand, 800)) assert.ok(p.x * side > 0, text + ': hand ' + hand + ' stays on its own side');
+    }
+  }
+});
+
+test('drawn scene: a held ball never overlaps another ball unless the pattern carries a collision warning', () => {
+  // findCollisions covers balls in flight. This covers the rest of the picture: a ball in a
+  // ghost hand against every other ball, held or flying.
+  for (const text of ['3', '4', '5', '6', '7', '531', '441', '456', '423', '51', '71', '7131', '552', '75', '97531', '312', '831', '52512', '1', '11', '501']) {
+    const { pattern, timeline } = setup(text);
+    const warned = findCollisions(pattern).collides;
+    let min = Infinity;
+    for (let k = 0; k < 6000; k++) {
+      const s = sceneAt(pattern, timeline, (k / 6000) * pattern.cycleTime * 2);
+      for (let a = 0; a < s.balls.length; a++) {
+        for (let q = a + 1; q < s.balls.length; q++) {
+          if (s.balls[a].air && s.balls[q].air) continue;
+          min = Math.min(min, Math.hypot(s.balls[a].x - s.balls[q].x, s.balls[a].y - s.balls[q].y));
+        }
+      }
+    }
+    assert.ok(warned || min >= pattern.ballDiameter, text + ': a held ball comes within ' + min.toFixed(3) + ' m of another, with no warning');
+  }
+});
+
+test('the draw loop can reuse the scene object: same picture, no new objects', () => {
+  for (const text of ['3', '7', '531', '423', '42', '501']) {
+    const { pattern, timeline } = setup(text);
+    let scratch;
+    for (let k = 0; k < 200; k++) {
+      const t = ((k * 37) % 200) * 0.013 - 0.4;
+      const fresh = sceneAt(pattern, timeline, t);
+      const reused = sceneAt(pattern, timeline, t, scratch);
+      if (scratch) assert.equal(reused, scratch, 'the same object comes back');
+      scratch = reused;
+      assert.equal(reused.balls.length, fresh.balls.length);
+      for (let i = 0; i < fresh.balls.length; i++) {
+        for (const key of ['ball', 'air', 'x', 'y', 'hand', 'value']) assert.equal(reused.balls[i][key], fresh.balls[i][key], text + ' ball ' + key);
+      }
+      for (const hand of [RIGHT, LEFT]) {
+        for (const key of ['x', 'y', 'vx', 'vy', 'carrying', 'holding']) assert.equal(reused.hands[hand][key], fresh.hands[hand][key], text + ' hand ' + key);
+      }
+    }
+  }
 });

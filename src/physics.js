@@ -25,8 +25,9 @@ export const BALL_DIAMETER = 0.06;
 /**
  * Dwell ratio r = d / (d + e): the fraction of the hand period a hand is holding a ball.
  * Every row of the [KL18] table has W = b/2 - 0.7, i.e. r = 0.7 (7 balls: W = 2.8), so 0.7 is the
- * value behind the numbers this app must show. Measured values vary: "near 2/3" in [K96],
- * 0.67 to 0.82 (average 0.75) in [KL18] p. 68.
+ * value behind the numbers this app must show for 5 balls and up. The two rows that are Kalvan's
+ * own measured patterns (3 and 4 balls, [K96]) carry the dwell ratio he measured instead, see
+ * PUBLISHED. Measured values vary: "near 2/3" in [K96], 0.67 to 0.82 (average 0.75) in [KL18] p. 68.
  */
 export const DWELL_RATIO = 0.7;
 
@@ -105,19 +106,36 @@ export function parseSiteswap(input) {
   const n = throws.length;
   const sum = throws.reduce((a, b) => a + b, 0);
 
-  // A siteswap is valid exactly when no two throws land on the same beat.
+  // A siteswap is valid exactly when no two throws land on the same beat. (A 0 "lands" on its own
+  // beat: it says that hand is empty then, so nothing else may arrive there.)
   const landedBy = new Array(n).fill(-1);
   for (let i = 0; i < n; i++) {
     const slot = (i + throws[i]) % n;
     if (landedBy[slot] !== -1) {
       const j = landedBy[slot];
-      let msg =
-        text + ' is not a valid siteswap: the ' + text[j] + ' (throw ' + (j + 1) + ') and the ' +
-        text[i] + ' (throw ' + (i + 1) + ') would land in the same hand at the same time.';
+      let msg = text + ' is not a valid siteswap: ';
+      if (throws[i] === 0 || throws[j] === 0) {
+        // One of the two is an empty hand, which throws nothing: say what really goes wrong.
+        const thrown = throws[i] === 0 ? j : i;
+        const empty = throws[i] === 0 ? i : j;
+        msg +=
+          'the ' + text[thrown] + ' (throw ' + (thrown + 1) + ') lands on beat ' + (empty + 1) +
+          ', where the pattern has a 0: an empty hand with nothing to throw.';
+      } else {
+        msg +=
+          'the ' + text[j] + ' (throw ' + (j + 1) + ') and the ' + text[i] + ' (throw ' + (i + 1) +
+          ') would land in the same hand at the same time.';
+      }
       if (sum % n !== 0) {
         msg +=
           ' Its throws average ' + (sum / n).toFixed(2) +
           '; a valid siteswap averages a whole number of balls.';
+      }
+      // "10" typed for ten balls: each character is one throw, so ten is the letter a.
+      if (/^[1-9][0-9]$/.test(text) && Number(text) <= 35) {
+        msg +=
+          ' If you meant ' + Number(text) + ' balls, type ' + Number(text).toString(36) +
+          ': each character is one throw, and throws of 10 to 35 are written as the letters a to z.';
       }
       return fail('invalid', msg);
     }
@@ -176,11 +194,12 @@ export function ballsInFlightPerHand(balls, dwellRatio, hands) {
  * Conventions for the short throws (labelled assumptions, see README "Assumptions"):
  *   v = 0  an empty beat: no ball, no flight.
  *   v = 2  a hold: the ball stays in the hand, no flight.                              (A2)
- *   v = 1  a fast pass straight across. A full dwell of 2rB does not fit in the one beat this
- *          ball has, so the same ratio is applied to that one beat: the receiving hand holds it
- *          for r B and it flies for (1 - r) B.                                         (A1)
- *          It is handed across the middle, from one hand's throw point to the other's
- *          (see throwAtBeat), the way jugglers bring the hands together for a 1.
+ *   v = 1  a hand-across. A full dwell of 2rB does not fit in the one beat this ball has, so the
+ *          same ratio is applied to that one beat: the receiving hand holds it for r B and it
+ *          flies for (1 - r) B.                                                        (A1)
+ *          The hands come together for it: the ball crosses the centre line by exactly its own
+ *          width, from half a ball diameter on the thrower's side to half a ball diameter on the
+ *          catcher's side (see releaseX / landingX), so each hand stays on its own side.
  */
 export function flightTime(value, beat, dwellRatio) {
   const r = dwellRatio === undefined ? DWELL_RATIO : dwellRatio;
@@ -215,34 +234,53 @@ export function launchSpeed(flight) {
 // ---------------------------------------------------------------------------------------------
 
 /**
- * Published hand periods T and flight distances F, by number of balls.
+ * Published hand periods T and flight distances F, by number of balls, and where each row is from.
  *
- *  KL18  "When Balls Collide", table of pattern parameters, "examples of good patterns" (p. 78):
- *        cascades of 5, 7, 9, 11, 13 balls and fountains of 6, 8, 10, 12 balls, with 6 cm balls
- *        and W = b/2 - 0.7 on every row. The 7-ball row is the juggling_coach README row.
- *  K96m  "Optimal Juggling" index, average measurements from videotape of Kalvan's own 3 and
- *        4 ball patterns, which the book's table does not cover. For 3 balls the measured dwell
- *        distance E = 0.20 m is used as the arc separation P (throw and catch at the same height).
+ *  KL18   "When Balls Collide", table of pattern parameters, "examples of good patterns" (p. 78),
+ *         6 cm balls, W = b/2 - 0.7. Only the 7-ball row has been checked: it is the row quoted
+ *         in the juggling_coach README, which is this app's reference.
+ *  KL18s  The other rows of the same table (cascades of 5, 9, 11, 13 and fountains of 6, 8, 10,
+ *         12 balls), as read from Google Books search snippets. They have NOT been checked against
+ *         the book, and the page says so (assumption A10 in the README).
+ *  K96m   "Optimal Juggling" index, "average measurements ... taken from videotapes" of Kalvan's
+ *         own 3 and 4 ball patterns (7.5 cm balls), which the book's table does not cover. These
+ *         two rows also carry his measured dwell ratio r (~0.63 and ~0.68), so that the tempo,
+ *         the width and the dwell all come from one real pattern. For 3 balls his measured dwell
+ *         distance E = 0.20 m sets the arc separation: with throw and catch at one height
+ *         (assumption A6) the hand travels exactly P, so P = E.
+ *
+ * `printed` holds what the source prints for quantities this app derives (strings, exactly as
+ * printed, in metres and degrees), so the page and the tests can set them side by side. The app
+ * never computes with them.
  */
 export const PUBLISHED = {
-  3: { T: 0.55, F: 0.33, P: 0.2, source: 'K96m' },
-  4: { T: 0.53, F: 0.25, source: 'K96m' },
-  5: { T: 0.49, F: 0.52, source: 'KL18' },
-  6: { T: 0.46, F: 0.37, source: 'KL18' },
-  7: { T: 0.42, F: 0.65, source: 'KL18' },
-  8: { T: 0.38, F: 0.45, source: 'KL18' },
-  9: { T: 0.35, F: 0.73, source: 'KL18' },
-  10: { T: 0.32, F: 0.52, source: 'KL18' },
-  11: { T: 0.3, F: 0.8, source: 'KL18' },
-  12: { T: 0.28, F: 0.57, source: 'KL18' },
-  13: { T: 0.27, F: 0.93, source: 'KL18' },
+  3: { T: 0.55, F: 0.33, E: 0.2, r: 0.63, source: 'K96m', printed: { H: '0.33' } },
+  4: { T: 0.53, F: 0.25, r: 0.68, source: 'K96m', printed: { H: '0.65' } },
+  5: { T: 0.49, F: 0.52, source: 'KL18s', printed: { H: '1.0', D1: '0.29', P: '0.32', width: '0.84', emaxDeg: '3.3' } },
+  6: { T: 0.46, F: 0.37, source: 'KL18s', printed: { H: '1.4', D1: '0.16', emaxDeg: '1.0' } },
+  7: { T: 0.42, F: 0.65, source: 'KL18', printed: { H: '1.7', D1: '0.23', P: '0.27', width: '0.92', emaxDeg: '1.4' } },
+  8: { T: 0.38, F: 0.45, source: 'KL18s', printed: { H: '2.0', D1: '0.14', emaxDeg: '0.57' } },
+  9: { T: 0.35, F: 0.73, source: 'KL18s', printed: { H: '2.2', D1: '0.19', P: '0.23', width: '0.96', emaxDeg: '0.84' } },
+  10: { T: 0.32, F: 0.52, source: 'KL18s', printed: { H: '2.4', D1: '0.12', emaxDeg: '0.35' } },
+  11: { T: 0.3, F: 0.8, source: 'KL18s', printed: { H: '2.6', D1: '0.17', P: '0.22', width: '1.02', emaxDeg: '0.60' } },
+  12: { T: 0.28, F: 0.57, source: 'KL18s', printed: { H: '2.8', D1: '0.11', emaxDeg: '0.25' } },
+  13: { T: 0.27, F: 0.93, source: 'KL18s', printed: { H: '3.0', D1: '0.16', P: '0.22', width: '1.15', emaxDeg: '0.48' } },
 };
 
 export const SOURCE_LABELS = {
-  KL18: 'Kalvan & Lewbel 2018, table of good patterns',
-  K96m: 'Kalvan 1996, measured from videotape',
+  KL18: 'Kalvan & Lewbel 2018, table of good patterns (the row quoted in juggling_coach)',
+  KL18s: 'Kalvan & Lewbel 2018, table of good patterns, as read from search snippets and not yet checked against the book',
+  K96m: 'Kalvan 1996, measured from videotape of his own pattern',
   extrapolated: 'held at the highest published row of its kind (no published values for this number)',
 };
+
+/** Does a computed value come out as the source prints it, at the precision it prints? */
+export function printsAs(value, printed) {
+  const text = String(printed);
+  const dot = text.indexOf('.');
+  const decimals = dot < 0 ? 0 : text.length - dot - 1;
+  return Number(value).toFixed(decimals) === Number(text).toFixed(decimals);
+}
 
 /**
  * Distance between the two parabolic arcs of a cascade when consecutive balls on opposite arcs
@@ -302,17 +340,30 @@ export function uniformPattern(balls, overrides) {
     throw new RangeError('uniformPattern needs a whole number of balls, 3 or more');
   }
   const o = overrides || {};
-  const r = o.dwellRatio === undefined ? DWELL_RATIO : o.dwellRatio;
   const D = o.ballDiameter === undefined ? BALL_DIAMETER : o.ballDiameter;
   const b = balls;
   const kind = b % 2 === 1 ? 'cascade' : 'fountain';
+
+  // The published row for b balls. Beyond the table (14 balls and up) there is nothing
+  // published: the tempo and ball spacing of the highest published row of the same kind are held
+  // (13 for cascades, 12 for fountains) and the result is flagged as extrapolated.
+  const own = PUBLISHED[b];
+  const borrowedFrom = own ? undefined : b % 2 === 1 ? 13 : 12;
+  const row = own || PUBLISHED[borrowedFrom];
+  const source = own ? own.source : 'extrapolated';
+
+  // Dwell ratio: Kalvan's own measured value where the row has one, else the table's 0.7.
+  const measuredDwell = own !== undefined && own.r !== undefined;
+  const r = o.dwellRatio !== undefined ? o.dwellRatio : measuredDwell ? own.r : DWELL_RATIO;
   const W = ballsInFlightPerHand(b, r);
 
-  const row = publishedRow(b, r);
   const T = o.T === undefined ? row.T : o.T;
   const f = W * T;
   const H = peakHeight(f);
-  const F = o.F === undefined ? (row.F !== undefined ? row.F : W * row.D1) : o.F;
+  let F;
+  if (o.F !== undefined) F = o.F;
+  else if (own) F = own.F;
+  else F = W * (row.F / ballsInFlightPerHand(borrowedFrom, r)); // same D1 as the borrowed row
   const Vh = F / f;
 
   // With less than one ball per arc, neighbours on an arc never meet: there is no D1.  [K96]
@@ -326,7 +377,7 @@ export function uniformPattern(balls, overrides) {
     if (D1 !== null) {
       P = arcSeparation(D1, Vh, T); // D2 = D1
     } else {
-      P = row.P; // 3 balls: measured, the theory leaves it free
+      P = row.E; // 3 balls: the theory leaves P free; Kalvan's measured hand travel (see PUBLISHED)
     }
   } else {
     // Fountain: the hands juggle independently, so P is not fixed by the collision math. [K96]:
@@ -348,6 +399,7 @@ export function uniformPattern(balls, overrides) {
     balls: b,
     kind,
     dwellRatio: r,
+    measuredDwell: measuredDwell && o.dwellRatio === undefined,
     ballDiameter: D,
     T,
     beat: T / 2,
@@ -366,26 +418,12 @@ export function uniformPattern(balls, overrides) {
     emaxDeg: emax === null ? null : (emax * 180) / Math.PI,
     xT,
     xC,
-    source: row.source,
-    sourceLabel: SOURCE_LABELS[row.source],
-    borrowedFrom: row.borrowedFrom,
+    xP: D / 2, // where a 1 is handed across (A1): half a ball diameter from the centre line
+    source,
+    sourceLabel: SOURCE_LABELS[source],
+    borrowedFrom,
+    printed: own && own.printed ? own.printed : null,
     assumptions,
-  };
-}
-
-/**
- * The published row for b balls. Beyond the table (14 balls and up) there is nothing published:
- * the tempo and ball spacing of the highest published row of the same kind are held (13 for
- * cascades, 12 for fountains) and the result is flagged as extrapolated.
- */
-function publishedRow(b, r) {
-  if (PUBLISHED[b]) return Object.assign({}, PUBLISHED[b]);
-  const from = b % 2 === 1 ? 13 : 12;
-  return {
-    T: PUBLISHED[from].T,
-    D1: PUBLISHED[from].F / ballsInFlightPerHand(from, r),
-    source: 'extrapolated',
-    borrowedFrom: from,
   };
 }
 
@@ -420,7 +458,7 @@ export function buildPattern(input, overrides) {
   const ref = uniformPattern(Math.max(3, maxThrow), o);
   const r = ref.dwellRatio;
   const beat = ref.beat;
-  const layout = o.layout || { xT: ref.xT, xC: ref.xC };
+  const layout = Object.assign({ xT: ref.xT, xC: ref.xC, xP: ref.xP }, o.layout || {});
 
   // Orbits: the permutation i -> (i + throw) mod n splits the beats into cycles. A cycle whose
   // throws sum to S carries S/n balls, and each of those balls repeats its path every S beats.
@@ -473,7 +511,8 @@ export function buildPattern(input, overrides) {
       height: heightByValue[v],
       dwellAfter: dwellAfter(v, beat, r),
       // Horizontal distance covered, shown for a right-hand throw (the left hand mirrors it).
-      distance: v === 0 || v === 2 ? 0 : Math.abs(landingX(layout, v, mod(v, 2)) - layout.xT),
+      distance: v === 0 || v === 2 ? 0 : Math.abs(landingX(layout, v, mod(v, 2)) - releaseX(layout, v, RIGHT)),
+      speed: v === 0 || v === 2 ? 0 : launchSpeedOf(layout, v, flightByValue[v]),
     }));
 
   return {
@@ -503,15 +542,30 @@ export function buildPattern(input, overrides) {
     cycleOfResidue,
     stepsToAnchor,
     ballCount,
+    recs: new Array(REC_CACHE), // throwAtBeat's small cache of throw records
   };
 }
 
+/** Speed at which a right-hand throw of this value leaves the hand, m/s. */
+function launchSpeedOf(layout, value, flight) {
+  const vx = (landingX(layout, value, mod(value, 2)) - releaseX(layout, value, RIGHT)) / flight;
+  return Math.hypot(vx, launchSpeed(flight));
+}
+
 /**
- * Where a throw of this value lands. Everything is thrown from the inside point xT and caught at
- * the outside point xC, except a 1, which is handed to the other hand's inside point (A1).
+ * Where a throw of this value leaves the hand: the inside point xT, except a 1, which is handed
+ * across from the pass point xP right next to the centre line (A1).
+ */
+function releaseX(layout, value, hand) {
+  return handSign(hand) * (value === 1 ? layout.xP : layout.xT);
+}
+
+/**
+ * Where a throw of this value lands: the outside point xC, except a 1, which lands in the other
+ * hand at its pass point, one ball diameter from where it was released (A1).
  */
 function landingX(layout, value, toHand) {
-  return handSign(toHand) * (value === 1 ? layout.xT : layout.xC);
+  return handSign(toHand) * (value === 1 ? layout.xP : layout.xC);
 }
 
 export function throwType(value) {
@@ -521,11 +575,20 @@ export function throwType(value) {
   return value % 2 === 1 ? 'cross' : 'same';
 }
 
+const REC_CACHE = 64; // a power of two, larger than any window of beats a frame looks at
+
 /**
  * The throw made on beat i (any integer, the pattern runs forever in both directions).
  * `air` is false for an empty beat (0) and for a hold (2).
+ *
+ * The record is shared and must be treated as read-only: the last few dozen are kept in a small
+ * ring, because the draw loop asks for the same handful of beats on every frame.
  */
 export function throwAtBeat(pattern, i) {
+  const slot = i & (REC_CACHE - 1);
+  const cached = pattern.recs[slot];
+  if (cached !== undefined && cached.beat === i) return cached;
+
   const n = pattern.period;
   const residue = mod(i, n);
   const value = pattern.throws[residue];
@@ -541,10 +604,11 @@ export function throwAtBeat(pattern, i) {
     tThrow,
     air: value !== 0 && value !== 2,
   };
+  pattern.recs[slot] = rec;
   if (!rec.air) return rec;
 
   const flight = pattern.flightByValue[value];
-  const x0 = handSign(hand) * pattern.layout.xT;
+  const x0 = releaseX(pattern.layout, value, hand);
   const x1 = landingX(pattern.layout, value, toHand);
   rec.flight = flight;
   rec.tCatch = tThrow + flight;
@@ -578,13 +642,18 @@ export function flightState(rec, t) {
 }
 
 /**
- * Where every ball is at time t. Each entry is
- *   { ball, air: true, x, y, vx, vy, throw }      in flight, or
- *   { ball, air: false, hand, throw }             in a hand (hands.js knows where the hand is).
+ * Where every ball is at time t. Each entry is { ball, air, x, y, vx, vy, hand, throw }:
+ *   in flight   air is true, x y vx vy are the ball's, hand is -1;
+ *   in a hand   air is false, hand says which, and x y vx vy are NaN (hands.js knows where the
+ *               hand is).
  * `throw` is the last throw record of that ball (its `value` is 2 while it is being held as a 2).
+ *
+ * Pass the array from the previous call as `out` to have its entries reused (the draw loop does,
+ * so that it makes no garbage); without it a fresh array is returned.
  */
-export function ballStates(pattern, t) {
-  const out = [];
+export function ballStates(pattern, t, out) {
+  const list = out || [];
+  let count = 0;
   const pos = t / pattern.beat;
   const n = pattern.period;
   for (let c = 0; c < pattern.cycles.length; c++) {
@@ -597,40 +666,63 @@ export function ballStates(pattern, t) {
       let m = cycle.members.length - 1;
       while (m > 0 && base + cycle.offsets[m] > pos + EPS) m--;
       const rec = throwAtBeat(pattern, base + cycle.offsets[m]);
-      const ball = cycle.firstBall + s;
+      let e = list[count];
+      if (e === undefined) e = list[count] = { ball: 0, air: false, x: 0, y: 0, vx: 0, vy: 0, hand: -1, throw: null };
+      count++;
+      e.ball = cycle.firstBall + s;
+      e.throw = rec;
       if (rec.air && t < rec.tCatch) {
-        const st = flightState(rec, Math.max(t, rec.tThrow));
-        out.push({ ball, air: true, x: st.x, y: st.y, vx: st.vx, vy: st.vy, throw: rec });
+        const since = Math.max(t, rec.tThrow) - rec.tThrow;
+        e.air = true;
+        e.hand = -1;
+        e.x = rec.x0 + rec.vx * since;
+        e.y = rec.vy * since - 0.5 * G * since * since;
+        e.vx = rec.vx;
+        e.vy = rec.vy - G * since;
       } else {
-        out.push({ ball, air: false, hand: rec.air ? rec.toHand : rec.hand, throw: rec });
+        e.air = false;
+        e.hand = rec.air ? rec.toHand : rec.hand;
+        e.x = e.y = e.vx = e.vy = NaN;
       }
     }
   }
-  return out;
+  list.length = count;
+  return list;
 }
 
 /**
  * Sound events with time in (t0, t1]: every release, peak and catch, sorted by time.
  * Holds (2) and empty beats (0) make no sound: nothing is thrown or caught.
+ *
+ * If `info` is given, info.next is set to a time before which no further event can happen (a
+ * lower bound on the first event after t1), so a caller that polls every frame can skip the scan
+ * until then.
  */
-export function eventsBetween(pattern, t0, t1) {
+export function eventsBetween(pattern, t0, t1, info) {
   const out = [];
+  if (info) info.next = t1;
   if (!(t1 > t0)) return out;
   const first = Math.floor(t0 / pattern.beat) - pattern.maxThrow - 1;
   const last = Math.floor(t1 / pattern.beat) + 1;
+  // Throws before `first` have landed before t0; throws after `last` start after this time:
+  let next = (last + 1) * pattern.beat;
   for (let i = first; i <= last; i++) {
     const rec = throwAtBeat(pattern, i);
     if (!rec.air) continue;
-    if (rec.tThrow > t0 && rec.tThrow <= t1) {
-      out.push(event('release', rec.tThrow, rec.x0, 0, rec.hand, rec));
+    if (rec.tThrow > t0) {
+      if (rec.tThrow <= t1) out.push(event('release', rec.tThrow, rec.x0, 0, rec.hand, rec));
+      else if (rec.tThrow < next) next = rec.tThrow;
     }
-    if (rec.tPeak > t0 && rec.tPeak <= t1) {
-      out.push(event('peak', rec.tPeak, (rec.x0 + rec.x1) / 2, rec.height, rec.hand, rec));
+    if (rec.tPeak > t0) {
+      if (rec.tPeak <= t1) out.push(event('peak', rec.tPeak, (rec.x0 + rec.x1) / 2, rec.height, rec.hand, rec));
+      else if (rec.tPeak < next) next = rec.tPeak;
     }
-    if (rec.tCatch > t0 && rec.tCatch <= t1) {
-      out.push(event('catch', rec.tCatch, rec.x1, 0, rec.toHand, rec));
+    if (rec.tCatch > t0) {
+      if (rec.tCatch <= t1) out.push(event('catch', rec.tCatch, rec.x1, 0, rec.toHand, rec));
+      else if (rec.tCatch < next) next = rec.tCatch;
     }
   }
+  if (info) info.next = next;
   out.sort((a, b) => a.time - b.time);
   return out;
 }

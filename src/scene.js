@@ -252,12 +252,12 @@ export class Stage {
   /** Move balls and ghost hands to where the math says they are at simulation time t. */
   update(t) {
     if (!this.pattern) return null;
-    const s = sceneAt(this.pattern, this.timeline, t);
+    const s = sceneAt(this.pattern, this.timeline, t, this.lastScene || undefined);
     for (const b of s.balls) {
       const mesh = this.balls[b.ball];
       if (mesh) mesh.position.set(b.x, b.y, 0);
     }
-    for (const hand of [RIGHT, LEFT]) {
+    for (let hand = 0; hand < 2; hand++) {
       const g = this.ghostHands[hand];
       g.visible = this.showGhostHands;
       g.position.set(s.hands[hand].x, s.hands[hand].y, 0);
