@@ -400,6 +400,11 @@ renders each sound offline and measures it (length, level, pitch, which ear), me
 between scheduled catches (under 1 ms off), and drags the volume and speed sliders while checking
 that no sound plays twice. The emulator is a test-only dev dependency; the page never loads it.
 
+`SMOKE_CHANNEL=chrome` runs it in the installed Google Chrome, `SMOKE_EXECUTABLE=/path/to/chrome`
+in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 58 checks pass in
+Chromium 141, in Chrome 149 and in Chromium 108 (from late 2022), tried as a stand-in for an old
+browser. Which Chromium the Quest 1's last browser is built on has not been established here.
+
 The emulator is not the headset: see [First time in the headset](#first-time-in-the-headset-not-done-yet).
 
 ## Deploying

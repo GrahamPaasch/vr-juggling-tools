@@ -6,6 +6,8 @@
  *   npm run smoke
  *   SMOKE_ONLY=flat,quest1 npm run smoke     some of the parts: flat, phone, path, gestures,
  *                                            quest1, edges, hands, no3d
+ *   SMOKE_CHANNEL=chrome npm run smoke       in the installed Google Chrome instead
+ *   SMOKE_EXECUTABLE=/path/to/chrome npm run smoke    in any Chromium build, an old one say
  *
  * The VR part uses Meta's Immersive Web Emulation Runtime (iwer), which stands in for the
  * headset: it supplies navigator.xr, a tracked head and two Touch controllers with the Quest 1's
@@ -1812,11 +1814,17 @@ const started = Date.now();
 const { server, url } = await listen({});
 let browser;
 try {
-  try {
-    browser = await chromium.launch({ args: GL_ARGS });
-  } catch (err) {
-    console.log('Bundled Chromium not found (' + String(err.message).split('\n')[0] + '); trying the installed Chrome.');
-    browser = await chromium.launch({ channel: 'chrome', args: GL_ARGS });
+  if (process.env.SMOKE_EXECUTABLE) {
+    browser = await chromium.launch({ executablePath: process.env.SMOKE_EXECUTABLE, args: GL_ARGS });
+  } else if (process.env.SMOKE_CHANNEL) {
+    browser = await chromium.launch({ channel: process.env.SMOKE_CHANNEL, args: GL_ARGS });
+  } else {
+    try {
+      browser = await chromium.launch({ args: GL_ARGS });
+    } catch (err) {
+      console.log('Bundled Chromium not found (' + String(err.message).split('\n')[0] + '); trying the installed Chrome.');
+      browser = await chromium.launch({ channel: 'chrome', args: GL_ARGS });
+    }
   }
   console.log('Chromium ' + browser.version() + ', page at ' + url);
   // SMOKE_ONLY=flat,quest1 (and so on) runs some of the parts; without it, all of them.
