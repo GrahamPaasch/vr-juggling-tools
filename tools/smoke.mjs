@@ -621,7 +621,35 @@ async function flatScreen(browser, base) {
     near((await anchor()).h, 1.05, 1e-9);
   });
 
-  await check('nothing lets you break the physics, and nothing keeps score', async () => {
+  await check('every ball is white on the flat page, whatever the pattern (no hand to judge, no colour)', async () => {
+    for (const text of ['3', '7', '531']) {
+      await app(page, (t) => window.__vrj.setPattern(t), text);
+      await page.waitForTimeout(700); // long enough for every hand to throw
+      const d = await app(page, () => {
+        const v = window.__vrj;
+        const balls = v.stage.balls.filter((m) => m.visible);
+        return {
+          count: balls.length,
+          want: v.state.pattern.balls,
+          white: balls.filter((m) => m.material === v.stage.ballMaterials[0]).length,
+          hex: v.stage.ballMaterials.map((m) => m.color.getHex()),
+          materials: new Set(v.stage.balls.map((m) => m.material.uuid)).size,
+          coloured: v.scorer.coloured,
+          judged: v.scorer.last[0].count + v.scorer.last[1].count,
+        };
+      });
+      assert.equal(d.count, d.want, text);
+      assert.equal(d.white, d.count, text + ': every ball is white');
+      assert.equal(d.hex.length, 4, 'four shared ball materials: white, green, yellow, red');
+      assert.equal(d.hex[0], 0xffffff);
+      assert.equal(d.materials, 1, 'all balls share one material');
+      assert.equal(d.coloured, false);
+      assert.equal(d.judged, 0, 'nothing is judged without a headset');
+    }
+    await app(page, () => window.__vrj.setPattern('3'));
+  });
+
+  await check('nothing lets you break the physics, and no points or streaks are kept', async () => {
     const page_text = (await page.textContent('body')).toLowerCase();
     assert.ok(!/score|points|streak/.test(page_text.replace(/scoring/g, '')), 'no scoring anywhere on the page');
     const ids = await page.$$eval('input', (nodes) => nodes.map((n) => n.id || n.getAttribute('aria-label')));
@@ -722,6 +750,166 @@ async function press(page, buttonId) {
   });
   assert.equal(hovered, buttonId, 'the ray is on the button');
   await pull(page, 'right');
+}
+
+/**
+ * Throw colours inside the emulated headset. The emulated controllers are moved by a hook that
+ * runs once a frame inside the page: `mode` says what each hand does.
+ *   'still'    stays where it is
+ *   'follow'   on the ghost hand (one frame behind: the emulator reads a pose at the frame's start)
+ *   'beside'   follows the ghost, `offset` metres too high
+ */
+async function throwColours(page, problems) {
+  const install = () =>
+    app(page, async () => {
+      const v = window.__vrj;
+      const d = window.__xrDevice;
+      const T = v.THREE;
+      const base = document.querySelector('script[type=module]').src.replace(/src\/main\.js.*$/, '');
+      const hands = await import(new URL('src/hands.js', base).href);
+      const names = ['right', 'left'];
+      const drive = (window.__drive = {
+        mode: ['still', 'still'],
+        offset: 0,
+        home: names.map((n) => [d.controllers[n].position.x, d.controllers[n].position.y, d.controllers[n].position.z]),
+        log: [], // one entry per judged throw: { hand, grade, position, lag, angle, pathLength }
+        seen: [v.scorer.last[0].count, v.scorer.last[1].count],
+        wrong: [], // frames on which a ball was drawn in a colour it should not have
+      });
+      // From the emulator's controller position to the palm point (fixed while the hand is not turned).
+      v.stage.rig.updateMatrixWorld(true);
+      const delta = names.map((n, side) => {
+        const palm = v.xr.palmPosition(side, new T.Vector3());
+        const c = d.controllers[n].position;
+        return palm.sub(v.stage.rig.localToWorld(new T.Vector3(c.x, c.y, c.z)));
+      });
+      const g = { x: 0, y: 0, vx: 0, vy: 0, carrying: false };
+      const p = new T.Vector3();
+      const update = v.xr.update.bind(v.xr);
+      drive.restore = () => {
+        v.xr.update = update;
+        names.forEach((n, side) => d.controllers[n].position.set(...drive.home[side]));
+      };
+      v.xr.update = (dt, frame) => {
+        for (let side = 0; side < 2; side++) {
+          if (drive.mode[side] === 'still') continue;
+          hands.handState(v.state.timeline, side, v.state.simTime, g);
+          p.set(g.x, g.y + (drive.mode[side] === 'beside' ? drive.offset : 0), 0);
+          v.stage.anchor.localToWorld(p).sub(delta[side]);
+          v.stage.rig.worldToLocal(p);
+          d.controllers[names[side]].position.set(p.x, p.y, p.z);
+        }
+        update(dt, frame);
+        // What was drawn on the frame before this one: a held ball white, a ball in flight in
+        // the colour the scorer gave it.
+        const scene = v.stage.lastScene;
+        if (scene) {
+          for (const b of scene.balls) {
+            const material = v.stage.balls[b.ball].material;
+            const want = v.stage.ballMaterials[b.air ? v.scorer.grades[b.ball] : 0];
+            if (material !== want) drive.wrong.push({ ball: b.ball, air: b.air, hand: b.hand, grade: v.scorer.grades[b.ball], drawn: v.stage.ballMaterials.indexOf(material), sim: v.state.simTime, lead: v.state.displayLead, mode: drive.mode.join() });
+          }
+        }
+        for (let side = 0; side < 2; side++) {
+          const last = v.scorer.last[side];
+          if (last.count !== drive.seen[side]) {
+            drive.seen[side] = last.count;
+            drive.log.push({ hand: side, grade: last.grade, position: last.position, lag: last.lag, angle: last.angle, pathLength: last.pathLength, speed: v.state.speed });
+          }
+        }
+      };
+    });
+  /** Set what the hands do, let the throws already under way go by, then collect `count` throws. */
+  const collect = async (mode, count, offset) => {
+    await app(
+      page,
+      ({ mode, offset }) => {
+        window.__drive.mode = mode;
+        window.__drive.offset = offset || 0;
+      },
+      { mode, offset }
+    );
+    await page.waitForFunction((n) => window.__drive.log.length >= n, (await app(page, () => window.__drive.log.length)) + 3, { timeout: 30000 });
+    const from = await app(page, () => window.__drive.log.length);
+    await page.waitForFunction((n) => window.__drive.log.length >= n, from + count, { timeout: 60000 });
+    return app(page, (from) => window.__drive.log.slice(from), from);
+  };
+  const names = ['none (white)', 'green', 'yellow', 'red'];
+  const all = (throws, hand, grade, label) => {
+    const mine = throws.filter((t) => t.hand === hand);
+    assert.ok(mine.length >= 2, label + ': throws of hand ' + hand + ' were judged');
+    for (const t of mine) assert.equal(names[t.grade], names[grade], label + ', hand ' + hand + ': ' + JSON.stringify(t));
+  };
+
+  await check('throw colours: hands held still are red, in flight only; a ball in the hand is white', async () => {
+    const before = await app(page, () => ({ calibrating: window.__vrj.state.vr.calibrating, palmStep: window.__vrj.state.vr.palmStep, text: window.__vrj.state.pattern.text }));
+    assert.deepEqual(before, { calibrating: false, palmStep: false, text: '3' });
+    await install();
+    const throws = await collect(['still', 'still'], 6);
+    all(throws, 0, 3, 'still');
+    all(throws, 1, 3, 'still');
+    // Right now: every ball in the air is red, every held ball white, and only four materials exist.
+    const now = await app(page, () => {
+      const v = window.__vrj;
+      return new Promise((resolve) => {
+        const out = { air: [], held: [], tries: 0 };
+        const look = () => {
+          const scene = v.stage.lastScene;
+          out.tries++;
+          if (!scene.balls.some((b) => b.air) || !scene.balls.some((b) => !b.air)) return setTimeout(look, 5);
+          for (const b of scene.balls) (b.air ? out.air : out.held).push(v.stage.ballMaterials.indexOf(v.stage.balls[b.ball].material));
+          resolve(out);
+        };
+        look();
+      });
+    });
+    assert.ok(now.air.length > 0 && now.air.every((g) => g === 3), 'in the air: ' + now.air);
+    assert.ok(now.held.length > 0 && now.held.every((g) => g === 0), 'in the hand: ' + now.held);
+  });
+
+  await check('throw colours: hands that follow the ghosts at 0.5x make every throw green', async () => {
+    await app(page, () => window.__vrj.setSpeed(0.5));
+    const throws = await collect(['follow', 'follow'], 8);
+    all(throws, 0, 1, 'following');
+    all(throws, 1, 1, 'following');
+    const worst = throws.reduce((m, t) => Math.max(m, t.position), 0);
+    console.log('          following one frame behind at 0.5x: position within ' + (worst * 1000).toFixed(0) + ' mm, lag ' + throws.map((t) => (t.lag * 1000).toFixed(0)).join(' ') + ' ms of pattern time');
+  });
+
+  await check('throw colours: a hand that follows a little too high is yellow; the limits scale with the scoop', async () => {
+    const length = await app(page, () => window.__drive.log[window.__drive.log.length - 1].pathLength);
+    near(length, 0.329, 0.01, 'length of the 3-ball scoop');
+    // Halfway between the green limit (15% of the scoop) and the yellow one (35%).
+    const throws = await collect(['beside', 'follow'], 6, 0.25 * length);
+    all(throws, 0, 2, 'right hand 8 cm high');
+    all(throws, 1, 1, 'left hand on the ghost');
+  });
+
+  await check('throw colours: a controller that is lost colours nothing; the other hand is still judged', async () => {
+    await app(page, () => {
+      window.__xrDevice.controllers.left.connected = false;
+    });
+    const throws = await collect(['follow', 'follow'], 6);
+    all(throws, 0, 1, 'right hand, tracked');
+    all(throws, 1, 0, 'left hand, lost');
+    await app(page, () => {
+      window.__xrDevice.controllers.left.connected = true;
+    });
+    const back = await collect(['follow', 'follow'], 4);
+    all(back, 1, 1, 'left hand, back');
+  });
+
+  await check('throw colours: no ball was ever drawn in a colour it was not given', async () => {
+    const wrong = await app(page, () => window.__drive.wrong);
+    assert.deepEqual(wrong, [], 'frames with a wrongly coloured ball');
+    // Put the hands and the speed back as they were.
+    await app(page, () => {
+      window.__drive.restore();
+      window.__vrj.setSpeed(1);
+    });
+    await frames(page, 3);
+    assert.deepEqual(problems, []);
+  });
 }
 
 async function quest1(browser, base) {
@@ -960,6 +1148,8 @@ async function quest1(browser, base) {
   await mkdir(OUT, { recursive: true });
   await page.screenshot({ path: path.join(OUT, 'vr-quest1-after-calibration.png') });
 
+  await throwColours(page, problems);
+
   await check('point and trigger on the control board: preset, then type 531 on the keypad', async () => {
     await press(page, 'pattern:7');
     assert.equal(await app(page, () => window.__vrj.state.pattern.text), '7');
@@ -1085,6 +1275,12 @@ async function quest1(browser, base) {
     assert.equal(await app(page, () => window.__vrj.state.vr.calibrating), true);
     assert.equal(await app(page, () => window.__vrj.xr.panel.group.visible), false);
     assert.deepEqual(await app(page, () => window.__vrj.xr.controllers.map((c) => c.ball.visible)), [true, true]);
+    // While calibrating the hands are held still on purpose: no throw is judged, every ball is white.
+    const judged = () => app(page, () => window.__vrj.scorer.last[0].count + window.__vrj.scorer.last[1].count);
+    const count = await judged();
+    await page.waitForTimeout(700);
+    assert.equal(await judged(), count, 'no throw is judged while calibrating');
+    assert.equal(await app(page, () => window.__vrj.stage.balls.every((m) => m.material === window.__vrj.stage.ballMaterials[0])), true, 'every ball is white while calibrating');
     await pull(page, 'left', 'x-button');
     assert.equal(await app(page, () => window.__vrj.state.vr.calibrating), false);
     assert.equal(await app(page, () => window.__vrj.xr.panel.group.visible), true);
@@ -1158,6 +1354,7 @@ async function quest1(browser, base) {
     assert.deepEqual(s.spot, [0, 0]);
     near(s.camY, s.eye, 1e-6, "back at the juggler's eye");
     assert.equal(await page.textContent('#enterVR'), 'Enter VR');
+    assert.equal(await app(page, () => window.__vrj.stage.balls.every((m) => m.material === window.__vrj.stage.ballMaterials[0])), true, 'out of VR every ball is white again');
     // How the session ran is on the page afterwards (for the first try in a real headset).
     assert.match(await page.textContent('#vrNote'), /^Last VR session: \d+ frames a second on average, slowest frame \d+ ms, drawn through XRWebGLLayer\.$/);
     assert.deepEqual(problems, []);
@@ -1694,6 +1891,11 @@ async function quest1Hands(browser, base) {
     console.log('          draw calls with both hands tracked, both eyes, looking at the 3-ball pattern: ' + calls);
     assert.ok(calls > 10 && calls < 80, 'draw calls: ' + calls);
     await page.screenshot({ path: path.join(OUT, 'vr-quest1-hands-stereo.png') });
+    // Tracked hands are judged too, from the palm point (here they are held still: red).
+    await page.waitForFunction(() => window.__vrj.scorer.last[0].count >= 3 && window.__vrj.scorer.last[1].count >= 3, null, { timeout: 15000 });
+    const judged = await app(page, () => ({ grades: window.__vrj.scorer.last.map((l) => l.grade), from: window.__vrj.xr.controllers.map((c) => c.palmFrom) }));
+    assert.deepEqual(judged.from, ['hand', 'hand']);
+    assert.deepEqual(judged.grades, [3, 3], 'still tracked hands throw red balls');
     await app(page, () => window.__vrj.xr.exit());
     await page.waitForFunction(() => !window.__vrj.state.vr.presenting);
     assert.deepEqual(problems, []);

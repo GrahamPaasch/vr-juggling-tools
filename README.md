@@ -8,9 +8,8 @@ optimal-juggling math, and any other vanilla siteswap with exact timing and heig
 always. Put on a VR headset and stand in the juggler's spot, or open the same page on a laptop or
 phone.
 
-Planned address: https://www.grahampaasch.com/juggling/vr (it is not deployed yet, see
-[Deploying](#deploying)). It has not been in a real headset yet either, see
-[First time in the headset](#first-time-in-the-headset-not-done-yet).
+Live at https://www.grahampaasch.com/juggling/vr (how it gets there: [Deploying](#deploying)).
+What to check in a real headset: [First time in the headset](#first-time-in-the-headset-not-done-yet).
 
 The spec this was built from is `specs/35-vr-juggling-visualizer.md` in the voice-ui repo.
 
@@ -39,7 +38,12 @@ The spec this was built from is `specs/35-vr-juggling-visualizer.md` in the voic
   shown, never saved.
 - **Hands.** Ghost hands do the correct scoop: catch outside, carry in and under, release inside,
   return over the top, hands alternating. Your own hands are drawn at the controllers so you can
-  line them up with the ghosts. Hand tracking is an optional toggle. There is no scoring.
+  line them up with the ghosts. Hand tracking is an optional toggle.
+- **Throw colours.** Every ball is white. In VR, each ball you "throw" takes a colour at its
+  release from how well your hand followed the ghost hand through that scoop: green for the right
+  motion at the right time, yellow for a little off, red for not right. It keeps the colour for
+  its whole flight and is white again when caught, so the pattern itself shows which throws were
+  good. No points, no streaks. See [Throw colours](#throw-colours).
 - **Palm, not controller tip.** A ball lands at the WebXR grip pose, which is defined as the centre
   of the curled fingers (with tracked hands: the middle of the palm, built from the hand joints).
   Never at the pointing ray. After the first trigger calibration a ball rests in each hand and
@@ -279,6 +283,52 @@ Changing a volume, mute or solo sets the gain of that sound's own bus and schedu
 it is heard at once and no sound can play twice. A change of speed or pattern cancels the sounds
 that have not started and schedules from there again, leaving alone the ones that have.
 
+## Throw colours
+
+All balls are white. Inside VR, while a ghost hand makes its scoop (from the start of the carry
+motion to the release) the page records your palm point on that side: the grip pose of the
+controller, or the palm of a tracked hand, the same point a ball lands on. At the release the
+recording is compared with the ghost's path and the ball that leaves takes a colour. It keeps it
+until it is caught, then it is white again. Three things are measured, and the worst of the three
+decides the colour:
+
+| | Green up to | Yellow up to | Beyond: red |
+|---|---|---|---|
+| **Timing**: how early or late you made the motion (the shift in time that lays your path best over the ghost's) | 20% of the scoop's duration | 40% | |
+| **Position**: the distance left between your palm and the ghost hand once that shift is taken out, root mean square over the scoop | 15% of the length of the ghost's scoop path, and never under 4 cm | 35%, and never under 8 cm | |
+| **Direction**: the angle between the way your palm moved over the last 40% of the scoop and the way the ghost's did (its velocity at the release is the ball's launch velocity) | 35 degrees | 70 degrees | also red: a palm that hardly moved there (under a quarter of the ghost's travel) |
+
+What those come to, for the uniform patterns:
+
+| Pattern | Scoop lasts | Scoop path | Timing: green / yellow, at 1x | at 0.5x (real time) | Position: green / yellow |
+|---|---|---|---|---|---|
+| 3 | 0.347 s | 33 cm | 69 / 139 ms | 139 / 277 ms | 4.9 / 11.5 cm |
+| 4 | 0.360 s | 49 cm | 72 / 144 ms | 144 / 288 ms | 7.3 / 17.0 cm |
+| 5 | 0.343 s | 58 cm | 69 / 137 ms | 137 / 274 ms | 8.7 / 20.2 cm |
+| 7 | 0.294 s | 60 cm | 59 / 118 ms | 118 / 235 ms | 8.9 / 20.8 cm |
+
+- The limits scale with the pattern: bigger scoops allow more centimetres. Times are pattern
+  time, so slow motion gives you proportionally more real time for the same colour.
+- Distance out of the pattern's plane (nearer or farther from your body) counts half. Depth is
+  the hardest thing to judge in a headset, and the math says nothing about it.
+- The ghost's direction is read with a little slack in time (15% of the scoop either side), since
+  on a curving path a small uncertainty in timing would otherwise show up as a large angle. Where
+  the ghost itself travels under 8 cm in that last stretch (the hand-across before a 1) direction
+  is left out.
+- A hand waiting at the catch point before a hold (a 2) is not judged until its scoop starts.
+- **No hand, no colour.** The ball stays white if the hand was not tracked through the scoop
+  (more than a fifth of the frames without a palm, fewer than three samples, or tracking that
+  began late or ended early). So everything is white on a flat screen, with a controller put down,
+  and during calibration and the palm step, when the hands are held still on purpose.
+- These limits are a first setting. They were tuned on simulated hands (one that follows the
+  ghost 80 ms behind at 0.5x, 2 cm off, with 1.5 cm of wobble, is green on at least four throws
+  in five, in the unit tests), not yet on a person in a headset. They are all in one place,
+  `THRESHOLDS` at the top of `src/accuracy.js`.
+- Cost on a Quest 1: four ball materials in all (white, green, yellow, red), shared by every
+  ball; a colour change swaps a material, nothing is created. Each hand records into fixed arrays
+  (64 samples, thinned out in slow motion) and one throw is judged in about a thousand evaluations
+  of the ghost path, once, at its release.
+
 ## Version 1 and version 2
 
 | | Version 1 (this) | Version 2 (decided, later) |
@@ -286,7 +336,7 @@ that have not started and schedules from there again, leaving alone the ones tha
 | Siteswaps | Vanilla asynchronous | Synchronous as well |
 | Layout | Kalvan optimum for uniform patterns; standard layout plus collision warning for the rest | Per-throw inside and outside throw and catch positions (for example 456 with the 6 thrown outside) |
 | Tempo | Kalvan's published hand period, fixed | Adjustable beat time and dwell, physics recomputed so it stays juggleable |
-| Your hands | Shown next to the ghosts, no judgement | Scoring your hands against the ghosts |
+| Your hands | Shown next to the ghosts; each throw colours its ball by how well the hand followed (added 2026-11-15) | A running score, if wanted |
 
 Decided against for now: clubs and rings, multiplex, passing, comparing real throws with the
 ideal, custom hand tracking, draggable heights, lowered gravity.
@@ -328,7 +378,10 @@ browser (or use the deployed https address), and check:
 4. **The board is readable** and its buttons can be hit with the trigger.
 5. **Sound plays**, the catches are even, and the release is audible and a little quieter than
    the catch. (Its slider is there if the headset's speakers disagree with the measurements.)
-6. **Seven balls hold the frame rate.** Load `7`, watch for a few seconds, leave VR, read the
+6. **Throw colours.** At 0.5x with the 3-ball cascade, follow the ghost hands with your own.
+   Do the balls you throw go green? Hold your hands still: they should go red. If careful
+   following mostly gives yellow, the limits in `src/accuracy.js` are too strict for real hands.
+7. **Seven balls hold the frame rate.** Load `7`, watch for a few seconds, leave VR, read the
    note again. A Quest 1 displays 72 frames a second.
 
 If VR does not start, the note says why. If it starts but looks wrong (black, torn, or slow),
@@ -345,6 +398,7 @@ be set up at all.
 | `src/hands.js` | Ghost hand paths. Pure. |
 | `src/schedule.js` | The clock (slow motion) and which sounds are due. Pure. |
 | `src/calibration.js` | What a trigger pull records, posture, palm nudge. Pure. |
+| `src/accuracy.js` | Throw colours: how a hand's scoop is judged against the ghost's. Pure. |
 | `src/describe.js` | The wording: what is exact, what is not covered. Pure. |
 | `src/audio.js` | The three sounds (Web Audio, no audio files). |
 | `src/scene.js` | three.js drawing. |
@@ -364,7 +418,7 @@ that reuses its objects instead of making garbage every frame.
 
 ## Tests
 
-`npm test` runs 111 unit tests with `node --test`:
+`npm test` runs 133 unit tests with `node --test`:
 
 - siteswap validation against an independent landing simulation for every digit string up to
   length 4, clear refusals of synchronous and multiplex input, and messages that say what is
@@ -381,6 +435,12 @@ that reuses its objects instead of making garbage every frame.
 - ghost hands: at the catch and release points on time, moving with the ball at release,
   scooping the right way round, no swing outward before a hand-across, alternating; no ball ever
   teleports, and no held ball overlaps another without a collision warning;
+- throw colours: the exact motion is green; a motion made late or early, beside the path, or
+  ending in the wrong direction is measured and graded at the documented limits; a still or
+  backwards hand is red; the limits scale with the pattern; a careful mimic at 0.5x is mostly
+  green; an untracked hand colours nothing; the colour is set at the release, kept through the
+  flight and gone at the catch, at 30 and 72 frames a second and at 0.1x, with display times that
+  step backwards, and without allocating in the frame loop;
 - the clock: slow motion changes when things are shown and nothing else;
 - sound: each event is handed to the audio clock once, also through hundreds of speed changes
   with any output latency; volume, mute and solo only set a gain; the clock that keeps the rhythm
@@ -390,20 +450,25 @@ that reuses its objects instead of making garbage every frame.
 - the wording (sources, unchecked rows, honesty notes, collision warning);
 - 500 random valid siteswaps and 2000 random strings: nothing breaks, nothing is silently wrong.
 
-`npm run smoke` drives the real page in headless Chromium: 58 checks on a laptop-sized screen, a
+`npm run smoke` drives the real page in headless Chromium: 64 checks on a laptop-sized screen, a
 phone-sized screen, the live site's `/juggling/vr` path, a browser without WebGL, and inside an
 emulated Oculus Quest 1 using Meta's [Immersive Web Emulation Runtime](https://github.com/meta-quest/immersive-web-emulation-runtime)
 (trigger calibration with one and two controllers, the palm step, pointing at the board, keypad
 entry, slow-motion label, stick movement, sitting and standing, a late first head pose, an input
-with no grip pose, a double press of Enter VR, the layer fallback, tracked hands). It also
+with no grip pose, a double press of Enter VR, the layer fallback, tracked hands; and the throw
+colours: every ball white on the flat page, red from hands held still, green from emulated
+controllers that follow the ghost hands at 0.5x, yellow from one that follows 8 cm too high,
+white from a controller that is lost, and white while calibrating). It also
 renders each sound offline and measures it (length, level, pitch, which ear), measures the gap
 between scheduled catches (under 1 ms off), and drags the volume and speed sliders while checking
 that no sound plays twice. The emulator is a test-only dev dependency; the page never loads it.
 
 `SMOKE_CHANNEL=chrome` runs it in the installed Google Chrome, `SMOKE_EXECUTABLE=/path/to/chrome`
-in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 58 checks pass in
-Chromium 141, in Chrome 149 and in Chromium 108 (from late 2022), tried as a stand-in for an old
-browser. Which Chromium the Quest 1's last browser is built on has not been established here.
+in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 64 checks pass in
+Chromium 141. (Before the throw colours were added, the 58 checks of that time also passed in
+Chrome 149 and in Chromium 108 from late 2022, tried as a stand-in for an old browser; that has
+not been run again.) Which Chromium the Quest 1's last browser is built on has not been
+established here.
 
 The emulator is not the headset: see [First time in the headset](#first-time-in-the-headset-not-done-yet).
 
