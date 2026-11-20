@@ -1615,6 +1615,355 @@ async function quest1(browser, base) {
   await context.close();
 }
 
+/** Press a board button, bringing the board in front first (a check may have hidden it). */
+async function board(page, id) {
+  await app(page, () => window.__vrj.xr.summonPanel('front'));
+  await frames(page, 2);
+  await press(page, id);
+}
+
+/**
+ * Placement (spec 35, 2026-11-20): guidelines, grabbing the pattern, the headset re-basing its
+ * origin, the headset coming off the face, "recenter", and the placement on the next entry. In a
+ * session of its own: these move the person and the pattern about.
+ */
+async function quest1Placement(browser, base) {
+  console.log('\nEmulated Quest 1: placing the pattern, and guidelines');
+  const { page, context, problems } = await open(browser, base, { xr: true, stereo: true });
+  await app(page, () => {
+    localStorage.setItem('vr-juggling-visualizer.v1', JSON.stringify({ text: '3', handHeight: 1.0, distance: 0.34, eyeHeight: 1.62, calibrated: true, palmChecked: true, nudge: { palm: 0, wrist: 0, thumb: 0 } }));
+  });
+  await page.reload({ waitUntil: 'load' });
+  await page.waitForFunction(() => window.__vrj && window.__vrj.state.pattern && !window.__vrj.state.vr.checking);
+  const stand = () =>
+    app(page, () => {
+      const d = window.__xrDevice;
+      d.position.set(0, 1.62, 0);
+      d.quaternion.set(0, 0, 0, 1);
+      d.controllers.left.position.set(-0.24, 1.0, -0.36);
+      d.controllers.right.position.set(0.24, 1.0, -0.36);
+    });
+  await stand();
+  await page.click('#enterVR');
+  await page.waitForFunction(() => window.__vrj.state.vr.presenting && window.__vrj.xr.placed, null, { timeout: 10000 });
+  await frames(page, 4);
+
+  await check('guidelines: off by default; the board toggles them, they sit on the simulated pattern, and are remembered', async () => {
+    const state = () =>
+      app(page, () => {
+        const v = window.__vrj;
+        const T = v.THREE;
+        const g = v.stage.guideLines;
+        const p = v.state.pattern;
+        // Every vertex of the strips, in the pattern frame.
+        const pos = v.stage.guides.geometry.getAttribute('position');
+        let minX = Infinity;
+        let maxX = -Infinity;
+        const xs = new Set();
+        const ys = [];
+        for (let i = 0; i < pos.count; i++) {
+          minX = Math.min(minX, pos.getX(i));
+          maxX = Math.max(maxX, pos.getX(i));
+          ys.push(pos.getY(i));
+        }
+        const world = v.stage.guides.localToWorld(new T.Vector3(g.center, g.crossY, 0));
+        const saved = JSON.parse(localStorage.getItem('vr-juggling-visualizer.v1'));
+        return {
+          on: v.state.show.guides,
+          board: v.xr.panel.model.showGuides,
+          visible: v.stage.guides.visible,
+          page: document.getElementById('showGuides').checked,
+          saved: saved.show.guides,
+          g,
+          xC: p.layout.xC,
+          vertices: pos.count,
+          minX,
+          maxX,
+          world: [world.x, world.y, world.z],
+          anchor: v.stage.anchor.localToWorld(new T.Vector3(0, g.crossY, 0)).toArray(),
+        };
+      });
+    let s = await state();
+    assert.deepEqual([s.on, s.board, s.visible, s.page], [false, false, false, false], 'off by default');
+    await board(page, 'toggle:guides');
+    s = await state();
+    assert.deepEqual([s.on, s.board, s.visible, s.page, s.saved], [true, true, true, true, true], 'on, lit on the board, ticked on the page, saved');
+    assert.equal(s.vertices, 24, 'four strips, one mesh');
+    near(s.g.right, s.xC, 1e-9, 'right edge at the catch point');
+    near(s.g.left, -s.xC, 1e-9, 'left edge at the catch point');
+    assert.ok(s.g.crossing && s.g.crossY > 0, 'a cascade has a crossing height above the hands');
+    for (let i = 0; i < 3; i++) near(s.world[i], s.anchor[i], 1e-6, 'the strips are in the pattern frame');
+    // A different pattern moves them.
+    await board(page, 'pattern:5');
+    const five = await state();
+    assert.ok(five.g.crossY > s.g.crossY && five.g.right > s.g.right, 'higher crossing and wider edges for 5 balls');
+    await board(page, 'pattern:3');
+    await board(page, 'toggle:guides');
+    s = await state();
+    assert.deepEqual([s.on, s.visible, s.page, s.saved], [false, false, false, false], 'off again');
+  });
+
+  await check('grab and drag: hold the grip, move the hand, the pattern follows and is remembered; no grading while held', async () => {
+    await app(page, () => window.__vrj.xr.hidePanel());
+    const look = () =>
+      app(page, () => {
+        const v = window.__vrj;
+        const T = v.THREE;
+        const c = v.xr.controllers.find((k) => k.handedness === 'right');
+        return {
+          centre: v.stage.anchor.getWorldPosition(new T.Vector3()).toArray(),
+          yaw: v.state.anchor.yaw,
+          palm: c.palm.getWorldPosition(new T.Vector3()).toArray(),
+          dragging: v.xr.dragging,
+          grades: v.scorer.grades ? Array.from(v.scorer.grades).filter((g) => g !== 0).length : 0,
+          coloured: v.scorer.coloured,
+          saved: JSON.parse(localStorage.getItem('vr-juggling-visualizer.v1')),
+          placement: Object.assign({}, v.state.placement),
+          prompt: v.xr.promptLabel.text,
+        };
+      });
+    const grip = (value) => app(page, (value) => window.__xrDevice.controllers.right.updateButtonValue('squeeze', value), value);
+    const before = await look();
+
+    // A quick squeeze (as when juggling) does not take hold.
+    await grip(1);
+    await frames(page, 2);
+    await grip(0);
+    await frames(page, 2);
+    let s = await look();
+    assert.equal(s.dragging, false, 'a short squeeze does not grab');
+    for (let i = 0; i < 3; i++) near(s.centre[i], before.centre[i], 1e-9, 'pattern unmoved by a short squeeze');
+
+    // Held: it takes hold.
+    await grip(1);
+    await page.waitForTimeout(400);
+    await frames(page, 3);
+    s = await look();
+    assert.equal(s.dragging, true, 'held grip grabs');
+    assert.equal(s.grades, 0, 'no ball is graded while the pattern is held');
+    assert.match(s.prompt, /Moving the pattern/);
+    // Move the hand 25 cm right (in tracking space) and 10 cm up.
+    await app(page, () => {
+      const c = window.__xrDevice.controllers.right;
+      c.position.set(c.position.x + 0.25, c.position.y + 0.1, c.position.z);
+    });
+    await frames(page, 4);
+    const moved = await look();
+    const handMove = [0, 1, 2].map((i) => moved.palm[i] - s.palm[i]);
+    near(Math.hypot(...handMove), Math.hypot(0.25, 0.1), 0.01, 'the hand moved');
+    for (let i = 0; i < 3; i++) near(moved.centre[i] - before.centre[i], handMove[i], 0.005, 'the pattern moved with the hand, axis ' + i);
+    near(moved.yaw, before.yaw, 1e-6, 'the hand did not turn, nor did the pattern');
+    assert.equal(moved.grades, 0, 'still no grading while held');
+
+    await grip(0);
+    await frames(page, 3);
+    const after = await look();
+    assert.equal(after.dragging, false, 'let go');
+    for (let i = 0; i < 3; i++) near(after.centre[i], moved.centre[i], 1e-6, 'stays where it was let go');
+    assert.ok(Math.hypot(after.placement.right, after.placement.forward) > 0.2, 'the placement moved');
+    for (const k of ['right', 'forward', 'turn']) near(after.saved.placement[k], after.placement[k], 1e-9, 'and is saved: ' + k);
+    near(after.saved.handHeight, after.centre[1], 1e-6, 'the height is saved as the hand height');
+    assert.match(after.prompt, /Placed/);
+
+    // Grab it again and bring it back where it was, for the checks that follow.
+    await grip(1);
+    await page.waitForTimeout(400);
+    await frames(page, 2);
+    await app(page, () => {
+      const c = window.__xrDevice.controllers.right;
+      c.position.set(c.position.x - 0.25, c.position.y - 0.1, c.position.z);
+    });
+    await frames(page, 3);
+    await grip(0);
+    await frames(page, 2);
+    const back = await look();
+    for (let i = 0; i < 3; i++) near(back.centre[i], before.centre[i], 0.002, 'dragged back');
+  });
+
+  await check('"move pattern" on the board arms a trigger grab (for tracked hands, which have no grip)', async () => {
+    await board(page, 'move');
+    assert.equal(await app(page, () => window.__vrj.xr.panel.model.moveArmed), true, 'armed, lit on the board');
+    await app(page, () => window.__vrj.xr.hidePanel());
+    const centre = () => app(page, () => window.__vrj.stage.anchor.getWorldPosition(new window.__vrj.THREE.Vector3()).toArray());
+    const before = await centre();
+    await app(page, () => window.__xrDevice.controllers.left.updateButtonValue('trigger', 1));
+    await frames(page, 3);
+    assert.equal(await app(page, () => window.__vrj.xr.dragging), true, 'the trigger grabs at once');
+    await app(page, () => {
+      const c = window.__xrDevice.controllers.left;
+      c.position.set(c.position.x, c.position.y, c.position.z - 0.1);
+    });
+    await frames(page, 3);
+    await app(page, () => window.__xrDevice.controllers.left.updateButtonValue('trigger', 0));
+    await frames(page, 2);
+    const after = await centre();
+    assert.equal(await app(page, () => window.__vrj.xr.moveArmed), false, 'disarmed after one move');
+    assert.ok(Math.hypot(after[0] - before[0], after[2] - before[2]) > 0.05, 'the pattern moved');
+    // And back.
+    await app(page, () => {
+      const c = window.__xrDevice.controllers.left;
+      c.position.set(c.position.x, c.position.y, c.position.z + 0.1);
+    });
+    await frames(page, 2);
+    await app(page, () => window.__vrj.xr.setMoveArmed(true));
+    await app(page, () => window.__xrDevice.controllers.left.updateButtonValue('trigger', 1));
+    await frames(page, 2);
+    await app(page, () => {
+      const c = window.__xrDevice.controllers.left;
+      c.position.set(c.position.x, c.position.y, c.position.z - 0.1);
+    });
+    await frames(page, 3);
+    await app(page, () => window.__xrDevice.controllers.left.updateButtonValue('trigger', 0));
+    await frames(page, 2);
+    await app(page, () => {
+      const c = window.__xrDevice.controllers.left;
+      c.position.set(c.position.x, c.position.y, c.position.z + 0.1);
+    });
+    await frames(page, 2);
+  });
+
+  await check('the headset re-basing its origin (reset, no transform) does not move the pattern or the person in the room', async () => {
+    const look = () =>
+      app(page, () => {
+        const v = window.__vrj;
+        const T = v.THREE;
+        v.xr.syncCamera();
+        return {
+          head: v.xr.headPosition(new T.Vector3()).toArray(),
+          yaw: v.xr.headYaw(),
+          centre: v.stage.anchor.getWorldPosition(new T.Vector3()).toArray(),
+          resets: v.xr.resets,
+          device: [window.__xrDevice.position.x, window.__xrDevice.position.y, window.__xrDevice.position.z],
+        };
+      });
+    // Step off the origin and turn the head a little, so the recenter has a move and a turn to undo.
+    await app(page, () => {
+      const d = window.__xrDevice;
+      d.position.set(d.position.x + 0.5, d.position.y, d.position.z - 0.3);
+      d.quaternion.set(0, Math.sin(0.2), 0, Math.cos(0.2));
+    });
+    await frames(page, 4);
+    const before = await look();
+    await app(page, () => window.__xrDevice.recenter());
+    await frames(page, 1);
+    await frames(page, 6);
+    const after = await look();
+    assert.equal(after.resets, before.resets + 1, 'the reset was seen');
+    assert.ok(Math.hypot(after.device[0] - before.device[0], after.device[2] - before.device[2]) > 0.05, 'the emulator really moved its origin');
+    for (let i = 0; i < 3; i++) near(after.head[i], before.head[i], 0.01, 'head stays put in the room, axis ' + i);
+    near(after.yaw, before.yaw, 0.01, 'and keeps its heading');
+    for (let i = 0; i < 3; i++) near(after.centre[i], before.centre[i], 1e-9, 'pattern untouched, axis ' + i);
+    await app(page, () => window.__xrDevice.quaternion.set(0, 0, 0, 1));
+    await frames(page, 2);
+  });
+
+  await check('a reset that says how the origin moved is followed exactly', async () => {
+    const r = await app(page, () => {
+      const v = window.__vrj;
+      const T = v.THREE;
+      const rig = v.stage.rig;
+      const before = rig.matrixWorld.clone();
+      const p = new T.Vector3(0.3, 1.2, -0.4).applyMatrix4(before); // a tracking-space point, in the world
+      // The new origin sits 0.5 m along +x and turned 0.3 rad in the old one's coordinates.
+      const q = new T.Quaternion().setFromAxisAngle(new T.Vector3(0, 1, 0), 0.3);
+      const transform = { position: { x: 0.5, y: 0, z: 0 }, orientation: { x: q.x, y: q.y, z: q.z, w: q.w } };
+      // The same point in the new coordinates.
+      const inNew = new T.Vector3(0.3, 1.2, -0.4).applyMatrix4(new T.Matrix4().compose(new T.Vector3(0.5, 0, 0), q, new T.Vector3(1, 1, 1)).invert());
+      v.xr.onReset({ transform });
+      rig.updateMatrixWorld(true);
+      const after = inNew.applyMatrix4(rig.matrixWorld);
+      // Undo, so nothing after this check notices.
+      const qi = q.clone().invert();
+      const ti = new T.Vector3(-0.5, 0, 0).applyQuaternion(qi);
+      v.xr.onReset({ transform: { position: { x: ti.x, y: ti.y, z: ti.z }, orientation: { x: qi.x, y: qi.y, z: qi.z, w: qi.w } } });
+      rig.updateMatrixWorld(true);
+      return { before: p.toArray(), after: after.toArray(), restored: rig.matrixWorld.elements.every((e, i) => Math.abs(e - before.elements[i]) < 1e-9) };
+    });
+    for (let i = 0; i < 3; i++) near(r.after[i], r.before[i], 1e-9, 'the same physical point is at the same world place, axis ' + i);
+    assert.equal(r.restored, true);
+  });
+
+  await check('headset off the face (session blurred or hidden): nothing graded; "recenter" puts the pattern back in front', async () => {
+    await app(page, () => window.__xrDevice.updateVisibilityState('visible-blurred'));
+    await frames(page, 3);
+    let s = await app(page, () => ({ vis: window.__vrj.xr.visibility, coloured: window.__vrj.scorer.coloured }));
+    assert.equal(s.vis, 'visible-blurred');
+    assert.equal(s.coloured, false, 'no colours while the headset is off');
+    await app(page, () => window.__xrDevice.updateVisibilityState('visible'));
+    await frames(page, 3);
+    assert.equal(await app(page, () => window.__vrj.xr.visibility), 'visible');
+
+    // Walk 0.6 m to the side and turn: "recenter" brings the pattern to the same place relative to you.
+    await app(page, () => {
+      const d = window.__xrDevice;
+      d.position.set(d.position.x + 0.6, d.position.y, d.position.z);
+    });
+    await frames(page, 3);
+    await board(page, 'recenter');
+    const r = await app(page, () => {
+      const v = window.__vrj;
+      const T = v.THREE;
+      const head = v.xr.headPosition(new T.Vector3());
+      return { head: head.toArray(), headYaw: v.xr.headYaw(), anchor: Object.assign({}, v.state.anchor), placement: Object.assign({}, v.state.placement) };
+    });
+    const yaw = r.headYaw;
+    const p = r.placement;
+    near(r.anchor.spotX, r.head[0] + Math.cos(yaw) * p.right - Math.sin(yaw) * p.forward, 0.01, 'spot x relative to the head');
+    near(r.anchor.spotZ, r.head[2] - Math.sin(yaw) * p.right - Math.cos(yaw) * p.forward, 0.01, 'spot z relative to the head');
+    await app(page, () => {
+      const d = window.__xrDevice;
+      d.position.set(d.position.x - 0.6, d.position.y, d.position.z);
+    });
+    await frames(page, 3);
+    await board(page, 'recenter');
+  });
+
+
+  await check('the placement is used again on the next entry, relative to where the person stands then', async () => {
+    const placement = await app(page, () => {
+      window.__vrj.state.placement = { right: 0.3, forward: 0.1, turn: 0.2 };
+      return window.__vrj.state.placement;
+    });
+    // Saved as a drag would save it.
+    await app(page, () => {
+      const raw = JSON.parse(localStorage.getItem('vr-juggling-visualizer.v1'));
+      raw.placement = window.__vrj.state.placement;
+      localStorage.setItem('vr-juggling-visualizer.v1', JSON.stringify(raw));
+    });
+    await app(page, () => window.__vrj.xr.exit());
+    await page.waitForFunction(() => !window.__vrj.state.vr.presenting);
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__vrj && window.__vrj.state.pattern && !window.__vrj.state.vr.checking);
+    // Standing somewhere else, facing +X (a quarter turn right).
+    await app(page, () => {
+      const d = window.__xrDevice;
+      d.position.set(1.0, 1.62, 2.0);
+      const h = -Math.PI / 4;
+      d.quaternion.set(0, Math.sin(h), 0, Math.cos(h));
+      d.controllers.left.position.set(1.36, 1.0, 1.76);
+      d.controllers.right.position.set(1.36, 1.0, 2.24);
+    });
+    await page.click('#enterVR');
+    await page.waitForFunction(() => window.__vrj.state.vr.presenting && window.__vrj.xr.placed, null, { timeout: 10000 });
+    await frames(page, 3);
+    const s = await app(page, () => ({ anchor: Object.assign({}, window.__vrj.state.anchor), placement: Object.assign({}, window.__vrj.state.placement), calibrating: window.__vrj.state.vr.calibrating }));
+    for (const k of ['right', 'forward', 'turn']) near(s.placement[k], placement[k], 1e-9, 'read back from storage: ' + k);
+    assert.equal(s.calibrating, false);
+    const yaw = -Math.PI / 2;
+    // Facing +X: right is +Z, forward is +X.
+    near(s.anchor.spotX, 1.0 + placement.forward, 0.01, 'spot x: 0.1 m forward of the head');
+    near(s.anchor.spotZ, 2.0 + placement.right, 0.01, 'spot z: 0.3 m to the right');
+    near(s.anchor.yaw, yaw + placement.turn, 0.01, 'turned as placed');
+    await app(page, () => window.__vrj.xr.exit());
+    await page.waitForFunction(() => !window.__vrj.state.vr.presenting);
+  });
+
+  await check('placement session: no errors', async () => {
+    assert.deepEqual(problems, []);
+  });
+  await context.close();
+}
+
 /** Scripts injected before the page, to imitate things a real headset does that the emulator does not. */
 const imitate = {
   // No head pose for the first frames of every session (three.js itself allows for this).
@@ -2179,6 +2528,7 @@ try {
   if (wanted('gestures')) await gestures(browser, url);
   if (wanted('quest1')) await quest1(browser, url);
   if (wanted('edges')) await quest1Edges(browser, url);
+  if (wanted('placement')) await quest1Placement(browser, url);
   if (wanted('hands')) await quest1Hands(browser, url);
   if (wanted('no3d')) await no3D(url);
 } finally {

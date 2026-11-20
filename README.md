@@ -84,6 +84,13 @@ trigger. Hide the board while you practise, so a stray trigger pull cannot press
 left stick moves you (push it well over: a resting thumb does nothing), the right stick turns you
 in 30 degree steps, and "my spot" on the board puts you back in the juggler's place.
 
+**Hold a grip button** (the side button under your middle finger) for a moment to grab the whole
+pattern; it follows your hand, turning as your hand turns, and stays where you let go. With
+tracked hands, press "move pattern" on the board, then pinch and hold. "recenter" brings the
+pattern back in front of you, where you last put it. "guidelines" on the board (or the Show
+checkbox on the page) draws the crossing height and the left edge, centre and right edge. See
+"Placing the pattern, and guidelines" below.
+
 ## The math
 
 Everything here lives in `src/physics.js`, which has no dependencies and is covered by
@@ -288,6 +295,43 @@ Changing a volume, mute or solo sets the gain of that sound's own bus and schedu
 it is heard at once and no sound can play twice. A change of speed or pattern cancels the sounds
 that have not started and schedules from there again, leaving alone the ones that have.
 
+## Placing the pattern, and guidelines
+
+Added 2026-11-20 (spec 35 amendment), after the pattern jumped (up high, say) when the headset
+was lifted to look at the room and put back on.
+
+- **Grab and drag.** A grip button held for 0.25 s takes hold (a quick squeeze while juggling does
+  not). The pattern then moves with the palm point of that hand, all three ways, and turns about
+  the vertical as the hand turns; a short buzz says it took hold and another that it was let go.
+  For tracked hands (no grip button) "move pattern" on the board arms a pinch, or a trigger pull,
+  for one move. Nothing can be grabbed while calibrating. The height and out buttons still work.
+- **Remembered.** The height is saved as the hand height (as the height buttons save it). Where
+  the pattern stands and how it is turned is saved relative to you, as so far right, so far
+  forward and so far turned from where you stood and faced on entering VR, and used the same way
+  on the next entry. Calibrating sets that back to straight in front of you; "Reset" on the page
+  forgets it. Code: `src/placement.js`.
+- **Not moving on its own.** The headset can re-base its tracking origin (after being taken off,
+  or recentred). The app listens for the reference space's `reset`. If the headset says how the
+  origin moved (the event's `transform`), the view is moved by exactly that, so the pattern stays
+  put in the room. If it does not, your head is put back where it was just before (the head does
+  not jump, the origin does), so the pattern stays where it was relative to you. While the
+  session is blurred or hidden (headset off the face, system menu), nothing is graded. If the
+  headset moves its origin without a `reset` event, nothing can tell; press "recenter".
+- **No throw colours while the pattern is held** or the headset is off: the balls stay white.
+- **Guidelines.** Off by default, remembered. Thin light-magenta strips in the plane of the
+  pattern, just behind the balls: one horizontal at the height where the balls cross the centre
+  line, and verticals at the left edge, the centre and the right edge, from 15 cm below the hands
+  to 10 cm above the highest peak. The edges are the outermost ball centres (the catch points).
+  The crossing is the highest crossing throw's (an odd throw of 3 or more; a 1 is handed across,
+  not crossed). Fountains and patterns like 441 have no crossing, so their line marks the top of
+  the highest throw. All of it comes from the simulated paths (`src/guides.js`), so it follows the
+  pattern, the calibration and the placement. One draw call.
+
+Not tested on a headset yet: the emulator checks the grip hold, the drag, both kinds of reset,
+blur and "recenter", but whether the Quest browser sends `reset` (and with a transform) when the
+headset is lifted, and whether its hand tracking sends pinches as needed, is only known on a
+real Quest.
+
 ## Throw colours
 
 All balls are white. Inside VR, while a ghost hand makes its scoop (from the start of the carry
@@ -420,6 +464,10 @@ browser (or use the deployed https address), and check:
    blue, bad ones dark with a white rim. Is the rim visible, and does "colorblind" fit its button?
 7. **Seven balls hold the frame rate.** Load `7`, watch for a few seconds, leave VR, read the
    note again. A Quest 1 displays 72 frames a second.
+8. **Placement stays put** (added 2026-11-20). Hold a grip to grab the pattern, move it, let go.
+   Lift the headset over your head, look at the room, put it back on: is the pattern where you
+   left it? If not, does "recenter" fix it? Leave VR and come back: is it where you put it,
+   relative to you? Then "guidelines": are the lines visible but out of the way?
 
 If VR does not start, the note says why. If it starts but looks wrong (black, torn, or slow),
 add `?layers=off` to the address: the page then draws through the plain `XRWebGLLayer`, the path
@@ -438,10 +486,12 @@ be set up at all.
 | `src/accuracy.js` | Throw colours: how a hand's scoop is judged against the ghost's. Pure. |
 | `src/palette.js` | The ball colours per grade, normal and colorblind. Pure. |
 | `src/describe.js` | The wording: what is exact, what is not covered. Pure. |
+| `src/placement.js` | Where the pattern stands relative to you, and grabbing it. Pure. |
+| `src/guides.js` | Where the guidelines go, from the simulated pattern. Pure. |
 | `src/audio.js` | The three sounds (Web Audio, no audio files). |
 | `src/scene.js` | three.js drawing. |
 | `src/view.js` | Flat-screen camera: juggler's eye and orbit. |
-| `src/xr.js` | WebXR session, controllers and tracked hands, palm point, movement. |
+| `src/xr.js` | WebXR session, controllers and tracked hands, palm point, movement, grabbing, origin resets. |
 | `src/vrpanel.js` | The control board inside VR. |
 | `src/ui.js`, `src/main.js` | On-page controls and the wiring. |
 | `vendor/three.module.min.js` | three.js r160.1, vendored. Nothing is fetched from a CDN. |
@@ -456,7 +506,7 @@ that reuses its objects instead of making garbage every frame.
 
 ## Tests
 
-`npm test` runs 140 unit tests with `node --test`:
+`npm test` runs 162 unit tests with `node --test`:
 
 - siteswap validation against an independent landing simulation for every digit string up to
   length 4, clear refusals of synchronous and multiplex input, and messages that say what is
@@ -489,10 +539,16 @@ that reuses its objects instead of making garbage every frame.
   even; no audio context before a real gesture;
 - calibration: what a trigger records, that it needs both hands, when a remembered calibration
   fits the posture, and that a palm nudge moves the pattern exactly as recalibrating would;
+- guidelines: the crossing height equals where the simulated balls cross the centre line (and
+  the closed form), the edges are the catch points, fountains and 441 fall back to the peak, 531
+  and 456 use the 5;
+- placement: right/forward/turn round-trip from any base, mean the same thing relative to the
+  person on the next entry (through JSON), junk or far-away saved values are refused, and a drag
+  moves and turns the pattern rigidly with the hand;
 - the wording (sources, unchecked rows, honesty notes, collision warning);
 - 500 random valid siteswaps and 2000 random strings: nothing breaks, nothing is silently wrong.
 
-`npm run smoke` drives the real page in headless Chromium: 67 checks on a laptop-sized screen, a
+`npm run smoke` drives the real page in headless Chromium: 75 checks on a laptop-sized screen, a
 phone-sized screen, the live site's `/juggling/vr` path, a browser without WebGL, and inside an
 emulated Oculus Quest 1 using Meta's [Immersive Web Emulation Runtime](https://github.com/meta-quest/immersive-web-emulation-runtime)
 (trigger calibration with one and two controllers, the palm step, pointing at the board, keypad
@@ -502,13 +558,17 @@ colours: every ball white on the flat page, red from hands held still, green fro
 controllers that follow the ghost hands at 0.5x, yellow from one that follows 8 cm too high,
 white from a controller that is lost, and white while calibrating; the colorblind mode: the
 board toggle, the same grades in the other palette with the outline on bad balls, the four looks
-measured in a rendered frame, and off again after a reload). It also
+measured in a rendered frame, and off again after a reload; and placement: the guidelines toggle
+and where the strips sit, a short squeeze that does not grab, a held grip that drags the pattern
+with the hand and saves it while grading nothing, the "move pattern" trigger grab, an origin
+reset without a transform (the emulator's recenter) and with one, the session blurred, "recenter",
+and the saved placement on the next entry). It also
 renders each sound offline and measures it (length, level, pitch, which ear), measures the gap
 between scheduled catches (under 1 ms off), and drags the volume and speed sliders while checking
 that no sound plays twice. The emulator is a test-only dev dependency; the page never loads it.
 
 `SMOKE_CHANNEL=chrome` runs it in the installed Google Chrome, `SMOKE_EXECUTABLE=/path/to/chrome`
-in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 67 checks pass in
+in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 75 checks pass in
 Chromium 141. (Before the throw colours were added, the 58 checks of that time also passed in
 Chrome 149 and in Chromium 108 from late 2022, tried as a stand-in for an old browser; that has
 not been run again.) Which Chromium the Quest 1's last browser is built on has not been
