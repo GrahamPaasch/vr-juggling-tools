@@ -649,6 +649,94 @@ async function flatScreen(browser, base) {
     await app(page, () => window.__vrj.setPattern('3'));
   });
 
+  await check('colorblind toggle: gray balls; on screen good > unjudged > ok > bad in lightness, bad outlined; never remembered', async () => {
+    assert.equal(await page.isChecked('#colorblind'), false, 'off by default');
+    await page.check('#colorblind');
+    let d = await app(page, () => {
+      const v = window.__vrj;
+      return { on: v.state.colorblind, gray: v.stage.balls.filter((m) => m.visible && m.material === v.stage.palettes.colorblind[0]).length, n: v.state.pattern.balls, materials: v.stage.palettes.normal.length + v.stage.palettes.colorblind.length };
+    });
+    assert.deepEqual(d, { on: true, gray: d.n, n: d.n, materials: 8 }, 'every ball gray, eight materials made once');
+    // Draw four balls in the four grades and measure them in the real frame (pure lightness, L*).
+    await app(page, () => window.__vrj.setPattern('4'));
+    await app(page, () => window.__vrj.stage.setShowGhostHands(false));
+    await frames(page, 3);
+    const seen = await app(page, () => {
+      const v = window.__vrj;
+      const T = v.THREE;
+      const grades = [1, 2, 3, 0]; // good, ok, bad, unjudged
+      const lstar = (r, g, b) => {
+        const lin = (c) => ((c /= 255) <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
+        const y = 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b);
+        return y > 216 / 24389 ? 116 * Math.cbrt(y) - 16 : (24389 / 27) * y;
+      };
+      return new Promise((resolve) => {
+        let tries = 0;
+        const original = v.stage.render.bind(v.stage);
+        v.stage.render = () => {
+          v.stage.setBallGrades(grades);
+          original();
+          const canvas = v.stage.canvas;
+          const W = canvas.width;
+          const H = canvas.height;
+          // Where each ball is on screen, and how big.
+          const at = v.stage.balls.slice(0, 4).map((m) => {
+            const c = m.getWorldPosition(new T.Vector3());
+            const edge = c.clone().add(new T.Vector3().setFromMatrixColumn(v.stage.camera.matrixWorld, 0).multiplyScalar(v.stage.ballRadius));
+            const p = c.clone().project(v.stage.camera);
+            const q = edge.project(v.stage.camera);
+            return { x: ((p.x + 1) / 2) * W, y: ((1 - p.y) / 2) * H, r: Math.abs(q.x - p.x) * W / 2, z: p.z };
+          });
+          const apart = at.every((a, i) => a.z < 1 && a.x > a.r * 2 && a.x < W - a.r * 2 && a.y > a.r * 2 && a.y < H - a.r * 2 && at.every((b, j) => i === j || Math.hypot(a.x - b.x, a.y - b.y) > (a.r + b.r) * 1.6));
+          if (!apart && ++tries < 300) return; // try the next frame
+          v.stage.render = original;
+          const c2 = document.createElement('canvas');
+          c2.width = W;
+          c2.height = H;
+          const ctx = c2.getContext('2d', { willReadFrequently: true });
+          ctx.drawImage(canvas, 0, 0);
+          const px = (x, y) => {
+            const p = ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data;
+            return lstar(p[0], p[1], p[2]);
+          };
+          const centre = at.map((a) => {
+            let sum = 0;
+            for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) sum += px(a.x + dx * a.r * 0.2, a.y + dy * a.r * 0.2);
+            return sum / 9;
+          });
+          // Just outside each ball, inside the outline (which reaches 1.14 radii): brightest of 8 directions.
+          const rim = at.map((a) => {
+            let best = 0;
+            for (let k = 0; k < 8; k++) best = Math.max(best, px(a.x + Math.cos((k * Math.PI) / 4) * a.r * 1.07, a.y + Math.sin((k * Math.PI) / 4) * a.r * 1.07));
+            return best;
+          });
+          const background = px(2, H - 2);
+          resolve({ apart, tries, centre, rim, background, radius: at[0].r });
+        };
+      });
+    });
+    await app(page, () => window.__vrj.stage.setShowGhostHands(window.__vrj.state.show.ghost));
+    const [good, ok, bad, none] = seen.centre;
+    const said = 'L* good ' + good.toFixed(0) + ', unjudged ' + none.toFixed(0) + ', ok ' + ok.toFixed(0) + ', bad ' + bad.toFixed(0) + '; rim of bad ' + seen.rim[2].toFixed(0) + ', of good ' + seen.rim[0].toFixed(0) + ', background ' + seen.background.toFixed(0) + ' (ball ' + seen.radius.toFixed(0) + ' px)';
+    console.log('          ' + said);
+    assert.ok(seen.apart, 'four balls apart on screen');
+    assert.ok(good > none + 12, said);
+    assert.ok(none > ok + 10, said);
+    assert.ok(ok > bad + 15, said);
+    assert.ok(bad < 25, 'bad is dark: ' + said);
+    assert.ok(seen.rim[2] > 70, 'the bad ball has a white rim: ' + said);
+    assert.ok(seen.rim[1] < 50, 'an ok ball has none: ' + said);
+    // Not remembered: the next visit starts off, in the normal colours.
+    const saved = await app(page, () => localStorage.getItem('vr-juggling-visualizer.v1'));
+    assert.ok(!/colorblind/i.test(saved || ''), 'never saved');
+    await page.reload({ waitUntil: 'load' });
+    await page.waitForFunction(() => window.__vrj && window.__vrj.state.pattern);
+    d = await app(page, () => ({ on: window.__vrj.state.colorblind, stage: window.__vrj.stage.colorblind, white: window.__vrj.stage.balls.every((m) => m.material === window.__vrj.stage.palettes.normal[0]) }));
+    assert.deepEqual(d, { on: false, stage: false, white: true }, 'a new launch starts off');
+    assert.equal(await page.isChecked('#colorblind'), false);
+    await app(page, () => window.__vrj.setPattern('3'));
+  });
+
   await check('nothing lets you break the physics, and no points or streaks are kept', async () => {
     const page_text = (await page.textContent('body')).toLowerCase();
     assert.ok(!/score|points|streak/.test(page_text.replace(/scoring/g, '')), 'no scoring anywhere on the page');
@@ -897,6 +985,50 @@ async function throwColours(page, problems) {
     });
     const back = await collect(['follow', 'follow'], 4);
     all(back, 1, 1, 'left hand, back');
+  });
+
+  await check('colorblind: the same judging in the other palette; a bad ball is dark with a white outline', async () => {
+    /** Wait for a frame with balls both in the air and in the hands; say what each is drawn in. */
+    const look = () =>
+      app(page, () => {
+        const v = window.__vrj;
+        return new Promise((resolve) => {
+          const go = () => {
+            const scene = v.stage.lastScene;
+            if (!scene.balls.some((b) => b.air) || !scene.balls.some((b) => !b.air)) return setTimeout(go, 5);
+            const out = { air: [], held: [], palette: v.stage.ballMaterials === v.stage.palettes.colorblind ? 'colorblind' : 'normal' };
+            for (const b of scene.balls) {
+              const m = v.stage.balls[b.ball].material;
+              (b.air ? out.air : out.held).push({ normal: v.stage.palettes.normal.indexOf(m), colorblind: v.stage.palettes.colorblind.indexOf(m), outline: v.stage.outlines[b.ball].visible, grade: v.scorer.grades[b.ball] });
+            }
+            resolve(out);
+          };
+          go();
+        });
+      });
+    await app(page, () => window.__vrj.panelAction('toggle:colorblind'));
+    assert.equal(await app(page, () => window.__vrj.state.colorblind), true);
+    const still = await collect(['still', 'still'], 4);
+    all(still, 0, 3, 'still, colorblind');
+    all(still, 1, 3, 'still, colorblind');
+    let now = await look();
+    assert.equal(now.palette, 'colorblind');
+    assert.ok(now.air.length > 0, 'balls in the air');
+    for (const b of now.air) assert.deepEqual(b, { normal: -1, colorblind: 3, outline: true, grade: 3 }, 'in the air: bad, dark, outlined');
+    for (const b of now.held) assert.deepEqual({ colorblind: b.colorblind, outline: b.outline }, { colorblind: 0, outline: false }, 'in the hand: gray, no outline');
+    const following = await collect(['follow', 'follow'], 6);
+    all(following, 0, 1, 'following, colorblind');
+    all(following, 1, 1, 'following, colorblind');
+    now = await look();
+    for (const b of now.air) assert.deepEqual(b, { normal: -1, colorblind: 1, outline: false, grade: 1 }, 'in the air: good, glowing blue');
+    // Off again: the balls go straight back to the normal colours, in the grades they have.
+    await app(page, () => window.__vrj.panelAction('toggle:colorblind'));
+    now = await look();
+    assert.equal(now.palette, 'normal');
+    for (const b of [...now.air, ...now.held]) assert.equal(b.colorblind, -1, 'no colorblind material left');
+    for (const b of now.air) assert.deepEqual({ normal: b.normal, outline: b.outline }, { normal: 1, outline: false });
+    const saved = await app(page, () => localStorage.getItem('vr-juggling-visualizer.v1'));
+    assert.ok(!/colorblind/i.test(saved), 'the toggle is never saved: ' + saved);
   });
 
   await check('throw colours: no ball was ever drawn in a colour it was not given', async () => {
@@ -1149,6 +1281,15 @@ async function quest1(browser, base) {
   await page.screenshot({ path: path.join(OUT, 'vr-quest1-after-calibration.png') });
 
   await throwColours(page, problems);
+
+  await check('the colorblind toggle on the board turns the mode on and off, and is shown lit while on', async () => {
+    const state = () => app(page, () => ({ on: window.__vrj.state.colorblind, board: window.__vrj.xr.panel.model.colorblind, cb: window.__vrj.stage.colorblind }));
+    assert.deepEqual(await state(), { on: false, board: false, cb: false }, 'starts off');
+    await press(page, 'toggle:colorblind');
+    assert.deepEqual(await state(), { on: true, board: true, cb: true });
+    await press(page, 'toggle:colorblind');
+    assert.deepEqual(await state(), { on: false, board: false, cb: false });
+  });
 
   await check('point and trigger on the control board: preset, then type 531 on the keypad', async () => {
     await press(page, 'pattern:7');

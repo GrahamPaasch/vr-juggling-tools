@@ -44,6 +44,11 @@ The spec this was built from is `specs/35-vr-juggling-visualizer.md` in the voic
   motion at the right time, yellow for a little off, red for not right. It keeps the colour for
   its whole flight and is white again when caught, so the pattern itself shows which throws were
   good. No points, no streaks. See [Throw colours](#throw-colours).
+- **Colorblind throw colours.** A "colorblind" toggle on the VR board (and on the page, under
+  the other show toggles) draws the same grades in a palette that red-green and blue-yellow
+  colour blindness can read, and that reads in pure grayscale too: unjudged balls mid-gray, good
+  a bright glowing blue, ok a dim orange, bad dark with a thin white outline. Off at every launch,
+  never remembered. See [Colorblind mode](#colorblind-mode).
 - **Palm, not controller tip.** A ball lands at the WebXR grip pose, which is defined as the centre
   of the curled fingers (with tracked hands: the middle of the palm, built from the hand joints).
   Never at the pointing ray. After the first trigger calibration a ball rests in each hand and
@@ -324,10 +329,40 @@ What those come to, for the uniform patterns:
   ghost 80 ms behind at 0.5x, 2 cm off, with 1.5 cm of wobble, is green on at least four throws
   in five, in the unit tests), not yet on a person in a headset. They are all in one place,
   `THRESHOLDS` at the top of `src/accuracy.js`.
-- Cost on a Quest 1: four ball materials in all (white, green, yellow, red), shared by every
-  ball; a colour change swaps a material, nothing is created. Each hand records into fixed arrays
+- Cost on a Quest 1: four ball materials in use (white, green, yellow, red), shared by every
+  ball, and four more for the colorblind mode, all made at the start; a colour change swaps a
+  material, nothing is created. Each hand records into fixed arrays
   (64 samples, thinned out in slow motion) and one throw is judged in about a thousand evaluations
   of the ghost path, once, at its release.
+
+### Colorblind mode
+
+Added 2026-11-19, after a red-green colourblind juggler at the club could barely tell the green,
+yellow and red apart. "colorblind" on the VR board (the row with arcs, ghost hands and my hands)
+or the checkbox on the page turns it on. The judging and the limits above are exactly the same;
+only the drawing changes. Each grade is told twice, by hue and by brightness:
+
+| Grade | Normal | Colorblind | Lightness L* on screen (lit side to shaded side) |
+|---|---|---|---|
+| Not judged (in the hand, untracked) | white | mid-gray `#8c8c8c` | about 65 to 42 |
+| Good | green | bright sky blue `#56b4e9`, glowing | about 95 to 80, the brightest |
+| OK | yellow | dim orange `#845200` | about 41 to 24 |
+| Bad | red | nearly black `#2a1608`, with a thin white outline | about 10 to 3, the darkest |
+
+- The hues are from the Okabe-Ito set (sky blue, orange, vermillion), which stay apart for
+  protan, deutan and tritan colour vision. Unjudged is neutral gray, not white, so an unjudged
+  ball is never mistaken for a good one.
+- The brightness steps carry the grade on their own. The unit tests check them in lightness
+  (CIE L*) under full protanopia, deuteranopia and tritanopia (Machado 2009 simulation) and in
+  pure grayscale, on the lit and the shaded side of a ball; the smoke test measures the four
+  looks in a real rendered frame (lately good 82, unjudged 64, ok 36, bad 10, background 8) and
+  finds the white rim around the bad ball.
+- The outline is a second sphere 1.14 times the ball's size, drawn from the inside only, so it
+  shows as a rim. It is shown only on a bad ball in this mode: one more draw call per such ball.
+- Not remembered, on purpose: every launch starts in the normal colours, so a headset lent to
+  someone never comes back in their mode. Only the throw colours change; nothing else on the
+  page is adapted for low vision.
+- The colours are in `src/palette.js`.
 
 ## Version 1 and version 2
 
@@ -381,6 +416,8 @@ browser (or use the deployed https address), and check:
 6. **Throw colours.** At 0.5x with the 3-ball cascade, follow the ghost hands with your own.
    Do the balls you throw go green? Hold your hands still: they should go red. If careful
    following mostly gives yellow, the limits in `src/accuracy.js` are too strict for real hands.
+   Then press "colorblind" on the board: the balls in your hands go gray, good throws bright
+   blue, bad ones dark with a white rim. Is the rim visible, and does "colorblind" fit its button?
 7. **Seven balls hold the frame rate.** Load `7`, watch for a few seconds, leave VR, read the
    note again. A Quest 1 displays 72 frames a second.
 
@@ -399,6 +436,7 @@ be set up at all.
 | `src/schedule.js` | The clock (slow motion) and which sounds are due. Pure. |
 | `src/calibration.js` | What a trigger pull records, posture, palm nudge. Pure. |
 | `src/accuracy.js` | Throw colours: how a hand's scoop is judged against the ghost's. Pure. |
+| `src/palette.js` | The ball colours per grade, normal and colorblind. Pure. |
 | `src/describe.js` | The wording: what is exact, what is not covered. Pure. |
 | `src/audio.js` | The three sounds (Web Audio, no audio files). |
 | `src/scene.js` | three.js drawing. |
@@ -418,7 +456,7 @@ that reuses its objects instead of making garbage every frame.
 
 ## Tests
 
-`npm test` runs 133 unit tests with `node --test`:
+`npm test` runs 140 unit tests with `node --test`:
 
 - siteswap validation against an independent landing simulation for every digit string up to
   length 4, clear refusals of synchronous and multiplex input, and messages that say what is
@@ -441,6 +479,10 @@ that reuses its objects instead of making garbage every frame.
   green; an untracked hand colours nothing; the colour is set at the release, kept through the
   flight and gone at the catch, at 30 and 72 frames a second and at 0.1x, with display times that
   step backwards, and without allocating in the frame loop;
+- colorblind mode: good > unjudged > ok > bad in lightness with clear gaps, for normal,
+  protan, deutan and tritan vision and in grayscale, lit and shaded; the four looks differ in
+  colour for each kind of colour blindness; the normal green and red really are close in hue for
+  a deutan eye; only "bad" is outlined;
 - the clock: slow motion changes when things are shown and nothing else;
 - sound: each event is handed to the audio clock once, also through hundreds of speed changes
   with any output latency; volume, mute and solo only set a gain; the clock that keeps the rhythm
@@ -450,7 +492,7 @@ that reuses its objects instead of making garbage every frame.
 - the wording (sources, unchecked rows, honesty notes, collision warning);
 - 500 random valid siteswaps and 2000 random strings: nothing breaks, nothing is silently wrong.
 
-`npm run smoke` drives the real page in headless Chromium: 64 checks on a laptop-sized screen, a
+`npm run smoke` drives the real page in headless Chromium: 67 checks on a laptop-sized screen, a
 phone-sized screen, the live site's `/juggling/vr` path, a browser without WebGL, and inside an
 emulated Oculus Quest 1 using Meta's [Immersive Web Emulation Runtime](https://github.com/meta-quest/immersive-web-emulation-runtime)
 (trigger calibration with one and two controllers, the palm step, pointing at the board, keypad
@@ -458,13 +500,15 @@ entry, slow-motion label, stick movement, sitting and standing, a late first hea
 with no grip pose, a double press of Enter VR, the layer fallback, tracked hands; and the throw
 colours: every ball white on the flat page, red from hands held still, green from emulated
 controllers that follow the ghost hands at 0.5x, yellow from one that follows 8 cm too high,
-white from a controller that is lost, and white while calibrating). It also
+white from a controller that is lost, and white while calibrating; the colorblind mode: the
+board toggle, the same grades in the other palette with the outline on bad balls, the four looks
+measured in a rendered frame, and off again after a reload). It also
 renders each sound offline and measures it (length, level, pitch, which ear), measures the gap
 between scheduled catches (under 1 ms off), and drags the volume and speed sliders while checking
 that no sound plays twice. The emulator is a test-only dev dependency; the page never loads it.
 
 `SMOKE_CHANNEL=chrome` runs it in the installed Google Chrome, `SMOKE_EXECUTABLE=/path/to/chrome`
-in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 64 checks pass in
+in any Chromium build, and `SMOKE_ONLY=flat,quest1` runs some of its parts. All 67 checks pass in
 Chromium 141. (Before the throw colours were added, the 58 checks of that time also passed in
 Chrome 149 and in Chromium 108 from late 2022, tried as a stand-in for an old browser; that has
 not been run again.) Which Chromium the Quest 1's last browser is built on has not been
